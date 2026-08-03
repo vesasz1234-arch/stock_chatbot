@@ -1,0 +1,40 @@
+name: Stock Bot Report Automation
+
+on:
+  schedule:
+    # 1. 주중 오전 첫 매크로 시황 리포트 (KST 월~금 07:30 -> UTC 일~목 22:30)
+    - cron: '30 22 * * 0-4'
+    
+    # 2. 주중 오후 마감 수급 & 섹터 리포트 (KST 월~금 16:00 -> UTC 월~금 07:00)
+    - cron: '0 7 * * 1-5'
+    
+  workflow_dispatch: # GitHub 웹 수동 실행 지원
+
+jobs:
+  run-stock-bot:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas numpy finance-datareader tqdm pytz beautifulsoup4 lxml openpyxl google-generativeai yfinance
+
+      - name: Run Report Automation Script
+        env:
+          APP_KEY: "PSSDHdJ44C6dUaTxnD28Vht6hOHBhFRjiFkA"
+          APP_SECRET: "5/AQN2eoGs1hX/BuYqjsWCPr3zUMLfBcdlic8zp7Axr3JzESm1J0roAxyjOdOuY30sEDilPdu27ELVD/nqiUNJV9wvCtl4aEdZFlhoK5JOfqfVA98yMRK3J5bBQwJm/Ej0Bd1tX2Qb+ecvniSS4mmbZclDrh1vRqby9ZflhX+kKTvmNXJOg="
+          TELEGRAM_BOT_TOKEN: "8612239847:AAFLgGhtJm8cOS9-eaW4wsSsQO2-9bWW0Qw"
+          TELEGRAM_TOKEN: "8612239847:AAFLgGhtJm8cOS9-eaW4wsSsQO2-9bWW0Qw"
+          TELEGRAM_CHAT_ID: "-1004358276766"
+          GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}"
+        run: |
+          python engine.py
