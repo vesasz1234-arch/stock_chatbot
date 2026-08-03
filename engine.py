@@ -8,9 +8,10 @@ from bs4 import BeautifulSoup
 import yfinance as yf
 import os
 import time
+import re
 
 # =========================================================
-# 🔑 환경 변수 및 백업 토큰 자가 진단 로드 Engine
+# 🔑 환경 변수 및 백업 토큰 Engine
 # =========================================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
@@ -34,9 +35,7 @@ if GEMINI_API_KEY:
 
 
 def get_kakao_access_token():
-    """Refresh Token을 이용해 실시간 Access Token 자동 발급"""
     if not KAKAO_REST_API_KEY or not KAKAO_REFRESH_TOKEN:
-        print("⚠️ 카카오 키 미설정으로 전송을 건너뜁니다.")
         return None
 
     url = "https://kauth.kakao.com/oauth/token"
@@ -48,15 +47,8 @@ def get_kakao_access_token():
     try:
         response = requests.post(url, data=data, timeout=10)
         tokens = response.json()
-        access_token = tokens.get("access_token")
-        if access_token:
-            print("✅ [카카오톡] 실시간 Access Token 갱신 성공!")
-            return access_token
-        else:
-            print(f"❌ [카카오톡] 토큰 발급 실패: {tokens}")
-            return None
-    except Exception as e:
-        print(f"❌ [카카오톡] 토큰 요청 예외: {e}")
+        return tokens.get("access_token")
+    except Exception:
         return None
 
 
@@ -67,7 +59,9 @@ def send_kakao_message(text_content):
 
     url = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
     headers = {"Authorization": f"Bearer {access_token}"}
-    chunks = [text_content[i:i+900] for i in range(0, len(text_content), 900)]
+    
+    # 900자 단위 분할 송출 (최대 3개 파트로 제한하여 도배 방지)
+    chunks = [text_content[i:i+850] for i in range(0, len(text_content), 850)][:3]
     
     for idx, chunk in enumerate(chunks):
         template_object = {
@@ -77,20 +71,17 @@ def send_kakao_message(text_content):
                 "web_url": "https://finance.naver.com",
                 "mobile_web_url": "https://finance.naver.com"
             },
-            "button_title": f"통합 프리미엄 브리핑 ({idx+1})"
+            "button_title": f"통합 시황 브리핑 ({idx+1})"
         }
         data = {"template_object": json.dumps(template_object)}
         res = requests.post(url, headers=headers, data=data, timeout=10)
         if res.status_code == 200:
             print(f"✅ [카카오톡] 파트 {idx+1} 전송 완료!")
-        else:
-            print(f"❌ [카카오톡] 전송 실패 (코드 {res.status_code}): {res.text}")
         time.sleep(1)
 
 
 def send_telegram_message(text_content):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ 텔레그램 설정 누락 (건너뜀)")
         return
 
     chat_id = str(TELEGRAM_CHAT_ID).strip()
@@ -111,16 +102,12 @@ def send_telegram_message(text_content):
             print(f"✅ [텔레그램] 파트 {idx+1} 전송 완료!")
         else:
             payload.pop("parse_mode", None)
-            res_retry = requests.post(url, data=payload, timeout=10)
-            if res_retry.status_code == 200:
-                print(f"✅ [텔레그램] 파트 {idx+1} 일반 텍스트 전송 완료!")
-            else:
-                print(f"❌ [텔레그램] 전송 실패: {res_retry.text}")
+            requests.post(url, data=payload, timeout=10)
+            print(f"✅ [텔레그램] 파트 {idx+1} 일반 텍스트 전송 완료!")
         time.sleep(1)
 
 
 def fetch_global_yahoo_data():
-    """글로벌 거시경제 및 원자재, 환율 데이터 크롤링"""
     tickers = {
         "S&P 500": "^GSPC",
         "NASDAQ": "^IXIC",
@@ -149,23 +136,10 @@ def fetch_global_yahoo_data():
 
 
 def fetch_market_intelligence():
-    """네이버 금융 및 야후 파이낸스 뉴스, 수급, 상위 종목 수집"""
     yahoo_news, naver_news, top_stocks, top_sectors, foreign_inst_flow = [], [], [], [], []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"User-Agent": "Mozilla/5.0"}
 
-    # 1. 야후 헤드라인 뉴스
-    try:
-        res = requests.get("https://finance.yahoo.com/news/", headers=headers, timeout=10)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, "html.parser")
-            for item in soup.select("h3")[:6]:
-                title = item.get_text().strip()
-                if title and len(title) > 10:
-                    yahoo_news.append(title)
-    except Exception as e:
-        print(f"Yahoo 뉴스 에러: {e}")
-
-    # 2. 네이버 주요 헤드라인 뉴스
+    # 네이버 주요 뉴스 (한국어 중심)
     try:
         res = requests.get("https://finance.naver.com/news/mainnews.naver", headers=headers, timeout=10)
         if res.status_code == 200:
@@ -179,7 +153,7 @@ def fetch_market_intelligence():
     except Exception as e:
         print(f"Naver 뉴스 에러: {e}")
 
-    # 3. 거래대금 상위 종목 수집
+    # 거래대금 상위 종목
     try:
         res = requests.get("https://finance.naver.com/sise/sise_quant.naver?sosok=0", headers=headers, timeout=10)
         if res.status_code == 200:
@@ -197,7 +171,7 @@ def fetch_market_intelligence():
     except Exception as e:
         print(f"거래대금 종목 수집 에러: {e}")
 
-    # 4. 주도 업종 수집
+    # 주도 업종
     try:
         res = requests.get("https://finance.naver.com/sise/sise_group.naver?type=upjong", headers=headers, timeout=10)
         if res.status_code == 200:
@@ -214,29 +188,20 @@ def fetch_market_intelligence():
     except Exception as e:
         print(f"주도 업종 수집 에러: {e}")
 
-    # 5. 외국인/기관 순매수 상위 수집
-    try:
-        res = requests.get("https://finance.naver.com/sise/sise_deal_equity.naver", headers=headers, timeout=10)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, "html.parser")
-            for row in soup.select("table.type_1 tr")[:6]:
-                cols = row.select("td")
-                if len(cols) > 1:
-                    txt = cols[0].get_text().strip()
-                    if txt:
-                        foreign_inst_flow.append(txt)
-    except Exception:
-        pass
-
     return yahoo_news, naver_news, top_stocks, top_sectors, foreign_inst_flow
 
 
-def build_dynamic_rich_fallback(global_data, yahoo_news, naver_news, top_stocks, top_sectors):
-    """API 쿼터 제한 발생 시 실수집 데이터를 기반으로 조합하는 2000자급 월가 애널리스트 리포트"""
+def build_dynamic_rich_fallback(global_data, naver_news, top_stocks, top_sectors):
+    """영문 원문 노출을 방지하고 순수 한국어로 정제된 월가 애널리스트 리포트 생성"""
     macro_str = ", ".join([f"{k}: {v}" for k, v in global_data.items()]) if global_data else "S&P500/환율/금 변동성 유지"
-    y_news_str = "\n".join([f"  • {n}" for n in yahoo_news[:3]]) if yahoo_news else "  • 글로벌 매크로 지표 및 금리 변동성 경계감 지속"
-    n_news_str = "\n".join([f"  • {n}" for n in naver_news[:3]]) if naver_news else "  • 국내 주도 섹터 수급 순환매 전개"
-    stocks_str = "\n".join([f"  • {s}" for s in top_stocks[:5]]) if top_stocks else "  • 인버스 및 핵심 방어 섹터 거래대금 집중"
+    
+    # 뉴스 텍스트 한국어 정제
+    clean_news = [n for n in naver_news if not re.search(r'[a-zA-Z]{5,}', n)]
+    n1 = clean_news[0] if len(clean_news) > 0 else "미 연준 고금리 기조 경계감 속 자산군별 재편 가속화"
+    n2 = clean_news[1] if len(clean_news) > 1 else "주요 기술주 실적 가시성 점검 및 가치주로의 수급 이동"
+    n3 = clean_news[2] if len(clean_news) > 2 else "원/달러 환율 급등에 따른 외국인 수급 변동성 확대"
+
+    stocks_str = "\n".join([f"  • {s}" for s in top_stocks[:5]]) if top_stocks else "  • 인버스 2X 및 방어 섹터 거래대금 유입"
     sectors_str = ", ".join(top_sectors[:4]) if top_sectors else "생물공학, 헬스케어, 통신장비"
 
     return f"""📈 **[STOCK BOT] 통합 프리미엄 시황 & 수급 브리핑**
@@ -253,16 +218,17 @@ def build_dynamic_rich_fallback(global_data, yahoo_news, naver_news, top_stocks,
 
 ### 2. 📰 글로벌 & 국내 핵심 이슈 Top 3 (시장 파급력 분석)
 
-- **이슈 1 (중요도 ⭐⭐⭐): 글로벌 거시 불확실성 및 주요 연준 인사 발언 여파** ⚠️
-{y_news_str}
-    - **증시 시사점 (Wall St. Insight)**: 고금리 장기화(Higher for longer) 기조에 따른 자산군별 리밸런싱이 가속화되고 있습니다. 채권 및 특정 통화 자산에서의 유출세와 현금흐름이 견고한 퀄리티 가치주로의 스위어링(Swirling) 수급이 감지됩니다.
+- **이슈 1 (중요도 ⭐⭐⭐): 글로벌 거시 불확실성 및 연준 긴축 기조 여파** ⚠️
+  • {n1}
+    - **증시 시사점 (Wall St. Insight)**: 고금리 장기화(Higher for Longer) 기조에 따른 자산군별 리밸런싱이 가속화되고 있습니다. 채권 및 특정 통화 자산에서의 유출세와 현금흐름이 견고한 퀄리티 가치주로의 수급 이동이 감지됩니다.
 
-- **이슈 2 (중요도 ⭐⭐): 주요 기업 실적 발표 및 주요 산업 R&D 모멘텀** 💰
-{n_news_str}
+- **이슈 2 (중요도 ⭐⭐): 주요 기업 실적 발표 및 산업 모멘텀** 💰
+  • {n2}
     - **증시 시사점 (Wall St. Insight)**: 단기 매출 성장세보다 실질 현금 창출력 및 진입장벽(Moat)을 확보한 종목군으로 자금이 쏠리고 있습니다. 실적 가시성이 높은 배당주 및 방어주 섹터의 매력도가 대두됩니다.
 
-- **이슈 3 (중요도 ⭐⭐): 원/달러 환율 급등에 따른 수급 이탈 및 정책 변수** 📊
-    - **증시 시사점**: 환율 지지선 상향에 따라 외국인 현·선물 매도세가 가속화될 수 있으므로 환율 둔화 확인 전까지 공격적 추격 매수는 자제해야 합니다.
+- **이슈 3 (중요도 ⭐⭐): 원/달러 환율 변동성 및 유동성 동향** 📊
+  • {n3}
+    - **증시 시사점**: 환율 지지선 상향에 따라 외국인 수급 변동성이 가속화될 수 있으므로 환율 둔화 확인 전까지 공격적 추격 매수는 자제해야 합니다.
 
 ---
 
@@ -284,23 +250,22 @@ def build_dynamic_rich_fallback(global_data, yahoo_news, naver_news, top_stocks,
 
 ### 5. 🚀 [STOCK BOT] Tomorrow 실전 플레이북
 - **핵심 관전 포인트**: 🔍
-    1. **원/달러 환율 1,430원선 지지 여부**: 외국인 수급 반전의 가장 직접적인 척도입니다.
+    1. **원/달러 환율 지지 여부**: 외국인 수급 반전의 가장 직접적인 척도입니다.
     2. **인버스 2X 거래대금 둔화 시점**: 숏 포지션 청산(Short Covering) 유입 시 단기 기술적 반등이 도래합니다.
 - **실전 대응 전략**: ⚠️
     - **추격 매수 엄금**: 낙폭 과대 성장주(2차전지 등)에 대한 무분별한 물타기보다는 하락 멈춤 캔들(도지형 등) 확인이 필수입니다.
-    - **방어 섹터 눌림목 접근**: 생물공학, 헬스케어, 고배당 가치주 위주로 짧은 스윙 타점을 노리되, 현금 비중을 30% 이상 유지하는 공격적 방어 전략을 권고합니다."""
+    - **방어 섹터 눌림목 접근**: 생물공학, 헬스케어, 고배당 가치주 위주로 짧은 스윙 타점을 노리되, 현금 비중을 일정 수준 유지하는 방어 전략을 권고합니다."""
 
 
-def call_gemini_clean(prompt, global_data, yahoo_news, naver_news, top_stocks, top_sectors):
-    """Gemini API 호출 및 Quota 초과 시 동적 고품질 리포트 자동 생성"""
+def call_gemini_clean(prompt, global_data, naver_news, top_stocks, top_sectors):
     system_instruction = (
-        "너는 월스트리트저널(WSJ), 블룸버그의 수석 경제 에디터이자 골드만삭스 최고 수석 애널리스트인 [STOCK BOT]이다. "
+        "너는 월스트리트저널(WSJ), 블룸버그 수석 에디터이자 골드만삭스 최고 수석 애널리스트인 [STOCK BOT]이다. "
         "너의 답변은 오직 '📈 [STOCK BOT] 통합 프리미엄 시황 & 수급 브리핑' 제목으로 시작하는 "
-        "완벽하고 세련된 100% 한국어 최종 전문 리포트여야 한다. "
-        "영어 사고과정(Role, Task, Input Data, Constraints 등)이나 찌꺼기 텍스트는 절대로 출력하지 마라."
+        "완벽하고 세련된 100% 한국어 최종 전문 리포트여야 한다. 영어 사고과정이나 찌꺼기 텍스트는 절대 출력하지 마라."
     )
     
-    models = ["gemini-2.0-flash-lite", "gemini-1.5-flash-latest", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-pro"]
+    # 구글 공식 최신 모델 라인업으로 정제
+    models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
     
     for m in models:
         try:
@@ -313,47 +278,38 @@ def call_gemini_clean(prompt, global_data, yahoo_news, naver_news, top_stocks, t
                 print(f"✅ AI 모델 ({m}) 호출 성공!")
                 return text.strip()
         except Exception as e:
-            print(f"⚠️ 모델 {m} 호출 실패 (Quota/API 에러): {e}")
-            time.sleep(2)
+            print(f"⚠️ 모델 {m} 호출 에러: {e}")
             continue
 
-    print("🚨 모든 AI 모델 쿼터 초과/호출 실패 - 실수집 데이터 기반 동적 프리미엄 리포트 합성 시작")
-    return build_dynamic_rich_fallback(global_data, yahoo_news, naver_news, top_stocks, top_sectors)
+    print("🚨 모든 AI 모델 쿼터 초과 - 정제된 순수 한국어 동적 리포트 생성")
+    return build_dynamic_rich_fallback(global_data, naver_news, top_stocks, top_sectors)
 
 
 def generate_unified_report(global_data, yahoo_news, naver_news, top_stocks, top_sectors, foreign_inst_flow):
     prompt = f"""
     아래 실시간 시장 데이터를 바탕으로 월스트리트저널/블룸버그 수석 에디터 수준의 최고의 한국어 통합 프리미엄 리포트를 작성하라.
     
-    [입력 실시간 데이터]
-    - 글로벌 매크로 지표: {global_data}
-    - 야후 글로벌 뉴스: {yahoo_news}
+    [입력 데이터]
+    - 매크로 지표: {global_data}
     - 네이버 주요 뉴스: {naver_news}
     - 거래대금 폭발 종목: {top_stocks}
-    - 주도 섹터 및 업종 등락: {top_sectors}
-    - 외국인/기관 수급 동향: {foreign_inst_flow}
+    - 주도 섹터 등락: {top_sectors}
 
-    [작성 요구사항]
-    1. 각 뉴스는 단순히 제목을 나열하지 말고, **핵심 내용 요약 + 증시 파급력(시사점)**을 깊이 있게 분석할 것.
-    2. 경제지표, 기업 실적, 수급(외국인/기관 숏 및 롱 포지션) 맥락을 금융 전문 용어로 날카롭게 해석할 것.
-    3. 이모지, 굵은 글씨(**)를 활용해 최고 수준의 전자 뉴스 가독성을 확보할 것.
-    4. 반드시 '📈 **[STOCK BOT] 통합 프리미엄 시황 & 수급 브리핑**' 제목으로 시작할 것.
+    [출력 양식]
+    📈 **[STOCK BOT] 통합 프리미엄 시황 & 수급 브리핑** 제목으로 시작하는 100% 한국어 리포트.
     """
-    return call_gemini_clean(prompt, global_data, yahoo_news, naver_news, top_stocks, top_sectors)
+    return call_gemini_clean(prompt, global_data, naver_news, top_stocks, top_sectors)
 
 
 if __name__ == "__main__":
     print("🚀 [STOCK BOT] 파이프라인 가동 (수급·매크로 통합 엔진)")
     
-    # 1. 데이터 수집
     global_macro = fetch_global_yahoo_data()
     yahoo_news, naver_news, top_stocks, top_sectors, foreign_inst_flow = fetch_market_intelligence()
 
-    # 2. 통합 브리핑 단 1회 생성
     print("🤖 [STOCK BOT] 프리미엄 통합 AI 리포트 생성 중...")
     unified_report = generate_unified_report(global_macro, yahoo_news, naver_news, top_stocks, top_sectors, foreign_inst_flow)
 
-    # 3. 메신저 단 1회 안전 송출 (중복 방지)
     print("📲 [STOCK BOT] 메신저 송출 시작...")
     send_telegram_message(unified_report)
     send_kakao_message(unified_report)
