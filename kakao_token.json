@@ -1,1 +1,4 @@
-{"access_token": "Zmf50evr9LemkpPDdam2qv2MsaK2RffRAAAAAQoNIBsAAAGfu-U2oP8D-j8FVvr5", "token_type": "bearer", "refresh_token": "d4gKu3IG-pRQB3_iH6uf0Rr5LnPlzlvuAAAAAgoNIBsAAAGfu-U2n_8D-j8FVvr5", "expires_in": 21599, "scope": "talk_message", "refresh_token_expires_in": 5183999}
+{
+  "rest_api_key": "e9d371ad51e7b46fb2baf2d959547eef",
+  "refresh_token": "d4gKu3IG-pRQB3_iH6uf0Rr5LnPlzlvuAAAAAgoNIBsAAAGfu-U2n_8D-j8FVvr5"
+}
