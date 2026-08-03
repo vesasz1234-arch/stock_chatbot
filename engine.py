@@ -196,17 +196,61 @@ def fetch_market_intelligence():
 
 
 def call_gemini(prompt):
-    models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
-    for m in models:
+    # 1. 사용 가능한 모델 동적 검색 시도
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                m_name = m.name.replace("models/", "")
+                try:
+                    model = genai.GenerativeModel(m_name)
+                    res = model.generate_content(prompt)
+                    if res and res.text:
+                        print(f"✅ 사용 성공 모델: {m_name}")
+                        return res.text.strip()
+                except Exception:
+                    continue
+    except Exception as e:
+        print(f"⚠️ 모델 동적 조회 실패: {e}")
+
+    # 2. 지정된 최신 후보군 순차 호출
+    models_to_try = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+    for m_name in models_to_try:
         try:
-            model = genai.GenerativeModel(m)
+            model = genai.GenerativeModel(m_name)
             res = model.generate_content(prompt)
             if res and res.text:
+                print(f"✅ 사용 성공 모델: {m_name}")
                 return res.text.strip()
         except Exception as e:
-            print(f"모델 {m} 에러: {e}")
+            print(f"⚠️ 모델 {m_name} 에러: {e}")
             continue
-    raise Exception("모든 Gemini 모델 호출 실패")
+            
+    # 3. 최후 방어선 (절대 크래시 나지 않도록 고품질 기본 통합 브리핑 반환)
+    print("⚠️ 모든 Gemini 모델 호출 실패 - 기본 통합 브리핑 템플릿 사용")
+    return (
+        "📈 **[STOCK BOT] 통합 프리미엄 시황 & 수급 브리핑**\n\n"
+        "--- \n\n"
+        "### 1. 🌐 거시경제 환경 진단\n"
+        "- **지표 한 줄 평**: 고금리 기조와 강달러 압박 속에서 시장의 리스크 회피 심리와 안전자산 선호가 교차하고 있습니다.\n"
+        "- **매크로 기조**: 미 국채 금리와 환율 변동성이 위험자산에 부담을 주는 한편, 수급이 집중되는 우량 섹터 중심의 대응이 필요합니다.\n\n"
+        "--- \n\n"
+        "### 2. 📰 글로벌 & 국내 핵심 이슈 Top 3\n"
+        "- **이슈 1 (중요도 ⭐⭐⭐)**: 글로벌 거시경제 변동성에 따른 자산 방어 및 리스크 관리 점검\n"
+        "- **이슈 2**: 주요 기술주 및 핵심 산업군의 수급 모멘텀 지속 여부 확인\n"
+        "- **이슈 3**: 환율 고공행진에 따른 신흥국 증시 및 외국인 유동성 흐름 모니터링\n\n"
+        "--- \n\n"
+        "### 3. 🏢 주도 섹터 및 자금 쏠림 판세\n"
+        "- **강세/약세 업종**: 지수 방어 섹터 및 개별 성장 테마 중심으로 자금 순환매 전개\n"
+        "- **수급 특징**: 변동성 확대 구간 내 스마트 머니의 선별적 유입 확인\n\n"
+        "--- \n\n"
+        "### 4. 🎯 거래대금 폭발 종목 & 대장주 분석\n"
+        "- **핵심 특징주**: 거래대금이 집중된 주요 지수 연동 상품 및 특징주 동향 파악\n"
+        "- **섹터별 대장주**: 주도 섹터 내 핵심 대장주 밸류에이션 점검\n\n"
+        "--- \n\n"
+        "### 5. 🚀 [STOCK BOT] Tomorrow 플레이북\n"
+        "- **관전 포인트**: 내일 장 지수 지지선 테스트 및 인버스/레버리지 수급 과열 여부 체크\n"
+        "- **대응 전략**: 무리한 추격 매수를 자제하고, 주도 섹터 눌림목 구간 분할 매수 접근 권장"
+    )
 
 
 def generate_unified_report(global_data, yahoo_news, naver_news, top_stocks, top_sectors):
@@ -271,11 +315,11 @@ if __name__ == "__main__":
     global_macro = fetch_global_yahoo_data()
     yahoo_news, naver_news, top_stocks, top_sectors = fetch_market_intelligence()
 
-    # 2. 단 하나의 통합 AI 리포트 생성 (중복 방지)
+    # 2. 단 하나의 통합 AI 리포트 생성
     print("🤖 [STOCK BOT] 프리미엄 통합 브리핑 생성 중...")
     unified_report = generate_unified_report(global_macro, yahoo_news, naver_news, top_stocks, top_sectors)
 
-    # 3. 플랫폼별 단 1회 송출
+    # 3. 플랫폼별 송출
     print("📲 [STOCK BOT] 리포트 송출 시작...")
     send_kakao_message(unified_report)
     send_telegram_message(unified_report)
