@@ -30,11 +30,10 @@ jobs:
 
       - name: Run Report Automation Script
         env:
-          APP_KEY: "PSSDHdJ44C6dUaTxnD28Vht6hOHBhFRjiFkA"
-          APP_SECRET: "5/AQN2eoGs1hX/BuYqjsWCPr3zUMLfBcdlic8zp7Axr3JzESm1J0roAxyjOdOuY30sEDilPdu27ELVD/nqiUNJV9wvCtl4aEdZFlhoK5JOfqfVA98yMRK3J5bBQwJm/Ej0Bd1tX2Qb+ecvniSS4mmbZclDrh1vRqby9ZflhX+kKTvmNXJOg="
           TELEGRAM_BOT_TOKEN: "8612239847:AAFLgGhtJm8cOS9-eaW4wsSsQO2-9bWW0Qw"
-          TELEGRAM_TOKEN: "8612239847:AAFLgGhtJm8cOS9-eaW4wsSsQO2-9bWW0Qw"
           TELEGRAM_CHAT_ID: "-1004358276766"
-          GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}"
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY || 'e9d371ad51e7b46fb2baf2d959547eef' }}
+          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN || 'd4gKu3IG-pRQB3_iH6uf0Rr5LnPlzlvuAAAAAgoNIBsAAAGfu-U2n_8D-j8FVvr5' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python engine.py
