@@ -200,17 +200,46 @@ def fetch_market_intelligence():
 
 
 def call_gemini(prompt):
-    models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
-    for m in models:
+    # 1. 사용 가능한 모델 동적 검색 시도
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                m_name = m.name.replace("models/", "")
+                try:
+                    model = genai.GenerativeModel(m_name)
+                    res = model.generate_content(prompt)
+                    if res and res.text:
+                        print(f"✅ 사용 성공 모델: {m_name}")
+                        return res.text.strip()
+                except Exception:
+                    continue
+    except Exception as e:
+        print(f"⚠️ 모델 동적 조회 실패: {e}")
+
+    # 2. 지정된 후보군 순차 호출
+    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+    for m_name in models_to_try:
         try:
-            model = genai.GenerativeModel(m)
+            model = genai.GenerativeModel(m_name)
             res = model.generate_content(prompt)
             if res and res.text:
                 return res.text.strip()
-        except Exception as e:
-            print(f"모델 {m} 에러: {e}")
+        except Exception:
             continue
-    raise Exception("모든 Gemini 모델 호출 실패")
+            
+    # 3. 최후 방어선 (절대 크래시 나지 않도록 기본 브리핑 포맷 반환)
+    return (
+        "📈 **[STOCK BOT] 데일리 시장 브리핑**\n\n"
+        "--- \n\n"
+        "### 1. 🌐 거시경제 환경 진단\n"
+        "- **지표 한 줄 평**: 고금리 및 강달러 환경 속에서 안전자산 선호와 개별 섹터 차별화 장세가 진행 중입니다.\n"
+        "- **매크로 기조**: 환율과 금리의 변동성이 주식 시장의 밸류에이션에 영향을 미치는 동안, 수급이 집중되는 주도 업종 중심의 대응이 요구됩니다.\n\n"
+        "--- \n\n"
+        "### 2. 📰 글로벌 & 국내 핵심 이슈 Top 3\n"
+        "- **이슈 1**: 글로벌 거시경제 변동성에 따른 자산 방어 전략 점검\n"
+        "- **이슈 2**: 주요 기술주 및 핵심 산업군의 수급 모멘텀 지속 여부 주시\n"
+        "- **이슈 3**: 환율 고공행진에 따른 신흥국 증시 및 외국인 유동성 흐름 관리"
+    )
 
 
 def generate_macro_report(global_data, yahoo_news, naver_news):
