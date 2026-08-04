@@ -264,8 +264,8 @@ def call_gemini_clean(prompt, global_data, naver_news, top_stocks, top_sectors):
         "완벽하고 세련된 100% 한국어 최종 전문 리포트여야 한다. 영어 사고과정이나 찌꺼기 텍스트는 절대 출력하지 마라."
     )
     
-    # 구글 공식 최신 모델 라인업으로 정제
-    models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+    # 구글 API 버전별 공식 호환 모델 이름 배열로 보완
+    models = ["gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro-latest", "gemini-1.5-flash"]
     
     for m in models:
         try:
