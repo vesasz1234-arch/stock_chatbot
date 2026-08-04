@@ -21,6 +21,8 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "-1004358276766"
 KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY") or "e9d371ad51e7b46fb2baf2d959547eef"
 KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN") or "d4gKu3IG-pRQB3_iH6uf0Rr5LnPlzlvuAAAAAgoNIBsAAAGfu-U2n_8D-j8FVvr5"
 
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL") or "https://discordapp.com/api/webhooks/1534112008767803433/B1S87u-nnaokeMR2lut-FAPv1PJAbeVuQunoWr-4AoZfrG4g70XwhuD8PATpApYgeFt1"
+
 if os.path.exists("kakao_token.json"):
     try:
         with open("kakao_token.json", "r", encoding="utf-8") as f:
@@ -104,6 +106,31 @@ def send_telegram_message(text_content):
             payload.pop("parse_mode", None)
             requests.post(url, data=payload, timeout=10)
             print(f"✅ [텔레그램] 파트 {idx+1} 일반 텍스트 전송 완료!")
+        time.sleep(1)
+
+
+def send_discord_message(text_content):
+    if not DISCORD_WEBHOOK_URL:
+        return
+
+    # 디스코드 글자 수 제한(2,000자) 대비 1,800자 단위 분할 송출
+    chunks = [text_content[i:i+1800] for i in range(0, len(text_content), 1800)]
+    headers = {"Content-Type": "application/json"}
+
+    for idx, chunk in enumerate(chunks):
+        payload = {
+            "content": chunk,
+            "username": "📈 [STOCK BOT]",
+            "avatar_url": "https://cdn-icons-png.flaticon.com/512/4712/4712109.png"
+        }
+        try:
+            res = requests.post(DISCORD_WEBHOOK_URL, data=json.dumps(payload), headers=headers, timeout=10)
+            if res.status_code in [200, 204]:
+                print(f"✅ [디스코드] 파트 {idx+1} 전송 완료!")
+            else:
+                print(f"❌ [디스코드] 파트 {idx+1} 전송 실패 ({res.status_code})")
+        except Exception as e:
+            print(f"⚠️ 디스코드 전송 에러: {e}")
         time.sleep(1)
 
 
@@ -313,4 +340,5 @@ if __name__ == "__main__":
     print("📲 [STOCK BOT] 메신저 송출 시작...")
     send_telegram_message(unified_report)
     send_kakao_message(unified_report)
+    send_discord_message(unified_report)
     print("✨ [STOCK BOT] 모든 프로세스 완료!")
