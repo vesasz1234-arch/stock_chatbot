@@ -5,19 +5,19 @@ import datetime
 import pandas as pd
 import numpy as np
 import FinanceDataReader as fdr
+import os
 import warnings
 warnings.filterwarnings("ignore")
 
 # =========================================================
-# 🔑 1. 한국투자증권(KIS) Open API & 텔레그램 인증 정보
+# 🔑 1. KIS API & 텔레그램 인증 정보 (환경변수/하이브리드)
 # =========================================================
-APP_KEY = "PSSDHdJ44C6dUaTxnD28Vht6hOHBhFRjiFkA"
-APP_SECRET = "5/AQN2eoGs1hX/BuYqjsWCPr3zUMLfBcdlic8zp7Axr3JzESm1J0roAxyjOdOuY30sEDilPdu27ELVD/nqiUNJV9wvCtl4aEdZFlhoK5JOfqfVA98yMRK3J5bBQwJm/Ej0Bd1tX2Qb+ecvniSS4mmbZclDrh1vRqby9ZflhX+kKTvmNXJOg="
+APP_KEY = os.environ.get("KIS_APP_KEY") or "PSSDHdJ44C6dUaTxnD28Vht6hOHBhFRjiFkA"
+APP_SECRET = os.environ.get("KIS_APP_SECRET") or "5/AQN2eoGs1hX/BuYqjsWCPr3zUMLfBcdlic8zp7Axr3JzESm1J0roAxyjOdOuY30sEDilPdu27ELVD/nqiUNJV9wvCtl4aEdZFlhoK5JOfqfVA98yMRK3J5bBQwJm/Ej0Bd1tX2Qb+ecvniSS4mmbZclDrh1vRqby9ZflhX+kKTvmNXJOg="
 URL_BASE = "https://openapi.koreainvestment.com:9443"
 
-# 대표님 텔레그램 인증 정보
-TELEGRAM_TOKEN = "8612239847:AAFLgGhtJm8cOS9-eaW4wsSsQO2-9bWW0Qw"
-TELEGRAM_CHAT_ID = "7345632889"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or "8612239847:AAFLgGhtJm8cOS9-eaW4wsSsQO2-9bWW0Qw"
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "-1004358276766"  # 유료/시그널 채널 ID
 
 class StockAlphaTelegramBot:
     def __init__(self, top_n=300):
@@ -46,7 +46,7 @@ class StockAlphaTelegramBot:
             return None
 
     def send_telegram_msg(self, message: str):
-        """텔레그램 실시간 알림 송신 (마크다운 파싱 오류 보정)"""
+        """텔레그램 실시간 알림 송신 (실패 시 일반 텍스트 재시도)"""
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
@@ -55,16 +55,9 @@ class StockAlphaTelegramBot:
         }
         try:
             res = requests.post(url, data=payload, timeout=5)
-            if res.status_code == 200:
-                print("✅ 텔레그램 알림 메시지 전송 완료!")
-            else:
-                # 마크다운 파싱 에러 방지용 일반 텍스트 재시도
+            if res.status_code != 200:
                 payload_plain = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-                res_plain = requests.post(url, data=payload_plain, timeout=5)
-                if res_plain.status_code == 200:
-                    print("✅ 텔레그램 일반 텍스트 전송 완료!")
-                else:
-                    print(f"❌ 텔레그램 전송 실패 (상태코드: {res_plain.status_code}) - 봇 대화창에서 /start 를 눌렀는지 확인하십시오.")
+                requests.post(url, data=payload_plain, timeout=5)
         except Exception as e:
             print(f"❌ 텔레그램 송신 오류: {e}")
 
@@ -93,8 +86,29 @@ class StockAlphaTelegramBot:
         except Exception:
             return True
 
+    def calculate_time_weighted_rvol(self, df):
+        """장중 경과 시간을 반영한 시간가중 상대거래량(RVOL) 산출"""
+        now = datetime.datetime.now()
+        market_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        
+        # 장 시작 전이거나 직후인 경우 기본값
+        if now < market_start:
+            elapsed_minutes = 1.0
+        else:
+            elapsed_minutes = max((now - market_start).total_seconds() / 60.0, 1.0)
+        
+        # 정규장 총 390분(09:00~15:30) 기준 비율
+        time_factor = min(elapsed_minutes / 390.0, 1.0)
+        
+        vol_ma10 = df['Volume'].iloc[:-1].tail(10).mean() + 1e-9
+        current_volume = df['Volume'].iloc[-1]
+        
+        # 장중인 경우 투사 거래량 반영
+        projected_volume = current_volume / time_factor
+        return projected_volume / vol_ma10
+
     def scan_stock_alpha(self, name: str, ticker: str):
-        """10년 검증 Real Fix 알파 알고리즘 장중 실시간 스캔"""
+        """Wall Street Real Fix 알파 알고리즘 장중 실시간 스캔"""
         try:
             start_dt = (datetime.datetime.now() - datetime.timedelta(days=45)).strftime("%Y-%m-%d")
             df = fdr.DataReader(ticker, start_dt)
@@ -104,11 +118,11 @@ class StockAlphaTelegramBot:
             df['MA5'] = df['Close'].rolling(5).mean()
             df['MA20'] = df['Close'].rolling(20).mean()
 
-            # RVOL (10일 평균 대비 거래량)
-            df['Vol_MA10'] = df['Volume'].rolling(10).mean()
-            df['RVOL'] = df['Volume'] / (df['Vol_MA10'] + 1e-9)
+            # 시간 가중 RVOL 보정 적용
+            rvol_weighted = self.calculate_time_weighted_rvol(df)
+            df['RVOL'] = rvol_weighted
 
-            # ATR 변동성
+            # ATR 변동성 지표
             prev_close = df['Close'].shift(1)
             tr = pd.concat([
                 df['High'] - df['Low'],
@@ -134,10 +148,10 @@ class StockAlphaTelegramBot:
             today = df.iloc[-1]
             today_str = datetime.datetime.now().strftime("%Y-%m-%d")
 
-            # 🎯 10년 검증 [Wall Street Real Fix Engine] 알파 조건
-            cond_gap = today['Gap_Up_Pct'] <= 0.025               # 1. 시가 갭상승 <= 2.5% 차단
-            cond_first = today['First_Breakout'] == True           # 2. 최초 돌파 첫날만 매수
-            cond_shadow = today['Upper_Shadow_Ratio'] <= 0.30     # 3. 윗꼬리 <= 30% 차단
+            # 🎯 Wall Street Real Fix 알파 매수 조건
+            cond_gap = today['Gap_Up_Pct'] <= 0.025               # 1. 시가 갭상승 <= 2.5%
+            cond_first = today['First_Breakout'] == True           # 2. 최초 돌파 첫날만 진입
+            cond_shadow = today['Upper_Shadow_Ratio'] <= 0.30     # 3. 윗꼬리 <= 30%
             cond_volume = today['RVOL'] >= 1.35                   # 4. 수급 유입 RVOL >= 1.35x
             cond_trend = (today['Close'] > today['Open']) and (today['Close'] > today['MA5']) # 5. 양봉 모멘텀
             cond_volatility = (today['Close'] >= today['BB_Upper']) or (today['ATR_Ratio'] >= 1.10) # 6. 변동성 스파이크
@@ -149,24 +163,25 @@ class StockAlphaTelegramBot:
                     self.scanned_signals.add(signal_key)
 
                     curr_price = int(today['Close'])
-                    target_price = int(curr_price * 1.018)  # +1.8% 목표가
-                    stop_price = int(curr_price * 0.992)    # -0.8% 손절가
+                    target_price = int(curr_price * 1.018)  # +1.8% 익절
+                    stop_price = int(curr_price * 0.992)    # -0.8% 손절
 
                     msg = (
-                        f"🚀 stock_alpha_bot 장중 알파 포착\n"
+                        f"🚨 **[ALPHA BOT] 실시간 알파 타격 포착**\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"• 종목명: {name} ({ticker})\n"
-                        f"• 현재가 (진입가): {curr_price:,}원\n"
-                        f"• 🎯 목표 익절가 (+1.8%): {target_price:,}원\n"
-                        f"• 🛑 기계적 손절가 (-0.8%): {stop_price:,}원\n"
+                        f"• **종목명**: {name} (`{ticker}`)\n"
+                        f"• **현재가 (진입)**: {curr_price:,}원\n"
+                        f"• 🎯 **목표가 (+1.8%)**: {target_price:,}원\n"
+                        f"• 🛑 **손절가 (-0.8%)**: {stop_price:,}원\n"
                         f"────────────────────\n"
-                        f"📊 수급 유입 (RVOL): {today['RVOL']:.2f}배\n"
-                        f"📈 변동성 비율 (ATR): {today['ATR_Ratio']:.2f}배\n"
-                        f"💡 알고리즘: Wall Street Real Fix (승률 64.8%)\n"
-                        f"⏰ 포착 시각: {datetime.datetime.now().strftime('%H:%M:%S')}\n"
+                        f"📊 **시간가중 수급(RVOL)**: {today['RVOL']:.2f}배\n"
+                        f"📈 **변동성 비율(ATR)**: {today['ATR_Ratio']:.2f}배\n"
+                        f"💡 **알고리즘**: Wall St. Real Fix (손익비 1:2.25)\n"
+                        f"⏰ **포착시각**: {datetime.datetime.now().strftime('%H:%M:%S')}\n"
                         f"━━━━━━━━━━━━━━━━━━━━"
                     )
                     self.send_telegram_msg(msg)
+                    print(f"🎯 [알파 시그널 송출] {name} ({ticker}) - 진입가: {curr_price:,}원")
 
         except Exception:
             pass
@@ -176,9 +191,9 @@ class StockAlphaTelegramBot:
         self.update_universe()
         
         start_msg = (
-            "🏛️ stock_alpha_bot 실시간 알파 알림봇 가동\n"
-            "• 상위 300개 주도주 10년 검증 알고리즘 실시간 감시 시작\n"
-            "• 승률: 64.82% | Profit Factor: 2.67 | 손익비: +1.8% / -0.8%"
+            "🏛️ **[ALPHA BOT] 퀀트 시그널 파이프라인 가동**\n"
+            "• 상위 300개 유동성주 실시간 감시 시작\n"
+            "• 승률 target 64%+ | 손익비 +1.8% / -0.8%"
         )
         self.send_telegram_msg(start_msg)
         print("🚀 [stock_alpha_bot] 장중 실시간 스캔 가동 중... (Ctrl+C 종료)")
@@ -186,18 +201,19 @@ class StockAlphaTelegramBot:
         try:
             while True:
                 now = datetime.datetime.now()
+                # 한국 주식 정규장 시간 (09:00 ~ 15:30)
                 is_market_open = (now.hour == 9 and now.minute >= 0) or (10 <= now.hour < 15) or (now.hour == 15 and now.minute <= 30)
 
                 if is_market_open:
                     is_bull_market = self.check_kospi_regime()
                     if is_bull_market:
-                        for name, ticker in self.universe.items():
+                        for name, ticker in list(self.universe.items()):
                             self.scan_stock_alpha(name, ticker)
-                            time.sleep(0.05)
+                            time.sleep(0.08)  # IP 차단 방지용 딜레이
                     else:
-                        print("⚠️ [KOSPI 하락장 스위치 작동] 매매 진입 강제 동결 중...")
+                        print("⚠️ [KOSPI 하락장 스위치] 하락장 위험 감지로 진입 강제 동결 중...")
 
-                time.sleep(15)
+                time.sleep(20)
 
         except KeyboardInterrupt:
             print("\n알림봇 가동을 안전하게 종료합니다.")
