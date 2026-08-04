@@ -21,7 +21,8 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "-1004358276766"
 KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY") or "e9d371ad51e7b46fb2baf2d959547eef"
 KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN") or "d4gKu3IG-pRQB3_iH6uf0Rr5LnPlzlvuAAAAAgoNIBsAAAGfu-U2n_8D-j8FVvr5"
 
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL") or "https://discordapp.com/api/webhooks/1534112008767803433/B1S87u-nnaokeMR2lut-FAPv1PJAbeVuQunoWr-4AoZfrG4g70XwhuD8PATpApYgeFt1"
+# [STOCK BOT 전용 디스코드 웹후크 URL]
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL") or "https://discordapp.com/api/webhooks/1534114852082155574/ggvSBAoyDs1JbPwW7V8hEWTRVX-5MCTzduMiqv0mxKEp5hLoZOsZ1TXDRzo8-cNdE6bW"
 
 if os.path.exists("kakao_token.json"):
     try:
@@ -126,11 +127,11 @@ def send_discord_message(text_content):
         try:
             res = requests.post(DISCORD_WEBHOOK_URL, data=json.dumps(payload), headers=headers, timeout=10)
             if res.status_code in [200, 204]:
-                print(f"✅ [디스코드] 파트 {idx+1} 전송 완료!")
+                print(f"✅ [디스코드 스탁봇] 파트 {idx+1} 전송 완료!")
             else:
-                print(f"❌ [디스코드] 파트 {idx+1} 전송 실패 ({res.status_code})")
+                print(f"❌ [디스코드 스탁봇] 파트 {idx+1} 전송 실패 ({res.status_code})")
         except Exception as e:
-            print(f"⚠️ 디스코드 전송 에러: {e}")
+            print(f"⚠️ 디스코드 스탁봇 전송 에러: {e}")
         time.sleep(1)
 
 
@@ -291,7 +292,6 @@ def call_gemini_clean(prompt, global_data, naver_news, top_stocks, top_sectors):
         "완벽하고 세련된 100% 한국어 최종 전문 리포트여야 한다. 영어 사고과정이나 찌꺼기 텍스트는 절대 출력하지 마라."
     )
     
-    # 구글 API 버전별 공식 호환 모델 이름 배열로 보완
     models = ["gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro-latest", "gemini-1.5-flash"]
     
     for m in models:
