@@ -118,7 +118,7 @@ def send_telegram_message(text_content):
 
 
 def split_text_smartly(text, max_length=1700):
-    """단락(\n\n) 또는 줄바꿈(\n) 기준으로 문맥 파괴 없이 메시지를 자르는 고급 분할 함수"""
+    """단락(\n\n) 기준 문맥 파괴 없는 분할 함수"""
     paragraphs = text.split("\n\n")
     chunks = []
     current_chunk = ""
@@ -141,7 +141,6 @@ def send_discord_message(text_content):
     if not DISCORD_WEBHOOK_URL:
         return
 
-    # 스마트 단락 분할 적용 (마크다운 파괴 방지)
     chunks = split_text_smartly(text_content, max_length=1700)
     headers = {"Content-Type": "application/json"}
 
@@ -321,21 +320,31 @@ def call_gemini_clean(prompt, global_data, naver_news, top_stocks, top_sectors):
         f"전달받은 최신 실시간 데이터를 바탕으로 월가급 완벽한 100% 한국어 최종 전문 리포트를 작성하라."
     )
     
-    # 파이썬 Google Generative AI 최신 표준 모델명 호환 레이어
-    models = ["gemini-1.5-flash", "gemini-1.5-pro", "models/gemini-1.5-flash"]
-    
-    for m in models:
+    # 구글 API 서버에서 실시간 이용 가능한 모델을 동적으로 탐색
+    available_models = []
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available_models.append(m.name)
+    except Exception as e:
+        print(f"⚠️ 모델 목록 조회 실패: {e}")
+
+    # 사용 가능 모델이 없거나 예외 시 기본 핑 테스트용 후보 지정
+    if not available_models:
+        available_models = ["models/gemini-1.5-flash", "models/gemini-1.5-pro"]
+
+    for m_name in available_models:
         try:
-            model = genai.GenerativeModel(m, system_instruction=system_instruction)
+            model = genai.GenerativeModel(model_name=m_name, system_instruction=system_instruction)
             res = model.generate_content(prompt)
             if res and res.text:
                 text = res.text.strip()
                 if "📈" in text:
                     text = "📈" + text.split("📈", 1)[1]
-                print(f"✅ AI 모델 ({m}) 호출 성공!")
+                print(f"✅ AI 모델 ({m_name}) 호출 성공!")
                 return text.strip()
         except Exception as e:
-            print(f"⚠️ 모델 {m} 호출 에러: {e}")
+            print(f"⚠️ 모델 {m_name} 호출 에러: {e}")
             time.sleep(1)
             continue
 
