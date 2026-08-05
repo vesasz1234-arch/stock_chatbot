@@ -143,7 +143,6 @@ def fetch_market_intelligence():
   naver_news, top_stocks, top_sectors = [], [], []
   headers = {"User-Agent": "Mozilla/5.0"}
 
-  # 1. 헤드라인 주요 뉴스
   try:
     res = requests.get(
         "https://finance.naver.com/news/mainnews.naver",
@@ -161,7 +160,6 @@ def fetch_market_intelligence():
   except Exception as e:
     print(f"Naver 뉴스 수집 에러: {e}")
 
-  # 2. 거래대금 상위 핵심 특징주
   try:
     res = requests.get(
         "https://finance.naver.com/sise/sise_quant.naver?sosok=0",
@@ -185,7 +183,6 @@ def fetch_market_intelligence():
   except Exception as e:
     print(f"거래대금 종목 수집 에러: {e}")
 
-  # 3. 주도 업종
   try:
     res = requests.get(
         "https://finance.naver.com/sise/sise_group.naver?type=upjong",
@@ -222,12 +219,11 @@ def call_gemini_clean(
       f"반드시 3성급(⭐⭐⭐) 핵심 이슈, 3성급 주요 기업 실적/모멘텀, 3성급 경제지표 분석을 명확히 구분하여 월가 최고 수준의 격조 높은 한국어로 작성하라."
   )
 
-  # 404 및 구형 모델 제거, 안정적인 최신 정규 모델 우선 순위 지정
+  # ⚡ 1순위로 즉시 성공했던 정규 모델(gemini-flash-latest)을 맨 앞에 배치
   target_models = [
+      "models/gemini-flash-latest",
       "models/gemini-2.0-flash",
       "models/gemini-1.5-flash",
-      "models/gemini-1.5-pro",
-      "models/gemini-flash-latest",
   ]
 
   for m_name in target_models:
