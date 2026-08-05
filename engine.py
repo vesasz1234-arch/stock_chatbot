@@ -137,11 +137,36 @@ def split_text_smartly(text, max_length=1700):
     return chunks
 
 
+def sanitize_report_text(text):
+    """AI 생각 과정(Chain of Thought) 영문 찌꺼기 및 메타데이터 완벽 제거 엔진"""
+    if not text:
+        return ""
+    
+    # 1. '📈' 또는 '[STOCK BOT]' 제목 이전의 영문 메타데이터 삭제
+    if "📈" in text:
+        text = "📈" + text.split("📈", 1)[1]
+    elif "[STOCK BOT]" in text:
+        text = "[STOCK BOT]" + text.split("[STOCK BOT]", 1)[1]
+
+    # 2. 영문 메타 라인 필터링
+    lines = text.split("\n")
+    cleaned_lines = []
+    for line in lines:
+        if any(bad in line for bad in ["Language:", "Input Data:", "Macro Analysis:", "Predictions:", "Keywords to use:", "Title:", "Start with required header?"]):
+            continue
+        cleaned_lines.append(line)
+
+    result = "\n".join(cleaned_lines).strip()
+    return result
+
+
 def send_discord_message(text_content):
     if not DISCORD_WEBHOOK_URL:
         return
 
-    chunks = split_text_smartly(text_content, max_length=1700)
+    # 정제 엔진 통과
+    cleaned_content = sanitize_report_text(text_content)
+    chunks = split_text_smartly(cleaned_content, max_length=1700)
     headers = {"Content-Type": "application/json"}
 
     for idx, chunk in enumerate(chunks):
@@ -246,6 +271,7 @@ def fetch_market_intelligence():
 
 
 def build_dynamic_rich_fallback(global_data, naver_news, top_stocks, top_sectors):
+    """100% 동적 데이터 기반 고품격 별점·이모티콘 보유 프리미엄 리포트 엔진"""
     macro_str = ", ".join([f"{k}: {v}" for k, v in global_data.items()]) if global_data else "글로벌 매크로 지표 변동성 유지"
     
     clean_news = [n for n in naver_news if not re.search(r'[a-zA-Z]{6,}', n)]
@@ -316,39 +342,41 @@ def call_gemini_clean(prompt, global_data, naver_news, top_stocks, top_sectors):
     system_instruction = (
         f"너는 월스트리트저널(WSJ) 수석 에디터이자 골드만삭스 수석 분석가인 [STOCK BOT]이다. "
         f"너는 지금 {mode_title}을 작성 중이다. "
-        f"답변은 오직 '📈 [STOCK BOT] 통합 프리미엄 시황 & 수급 브리핑 ({mode_title})'으로 시작해야 한다. "
-        f"전달받은 최신 실시간 데이터를 바탕으로 월가급 완벽한 100% 한국어 최종 전문 리포트를 작성하라."
+        f"답변은 오직 '📈 **[STOCK BOT] 통합 프리미엄 시황 & 수급 브리핑 ({mode_title})**'으로 시작해야 한다. "
+        f"영어 사고 과정이나 메타데이터를 절대 출력하지 말고 100% 한국어 이모티콘 및 별점(⭐⭐⭐)이 포함된 최종 전문 리포트만 출력하라."
     )
     
-    # 구글 API 서버에서 실시간 이용 가능한 모델을 동적으로 탐색
-    available_models = []
+    # 영문 유출 모델(gemma) 및 TTS 모델을 엄격히 배제하고 정규 Gemini 모델만 선별
+    target_models = []
     try:
         for m in genai.list_models():
+            m_name = m.name
             if 'generateContent' in m.supported_generation_methods:
-                available_models.append(m.name)
+                # gemma, tts, embedding 모델 엄격 차단
+                if 'gemini' in m_name and not any(bad in m_name for bad in ['tts', 'embed', 'audio', 'gemma']):
+                    target_models.append(m_name)
     except Exception as e:
-        print(f"⚠️ 모델 목록 조회 실패: {e}")
+        print(f"⚠️ 모델 목록 조회 예외: {e}")
 
-    # 사용 가능 모델이 없거나 예외 시 기본 핑 테스트용 후보 지정
-    if not available_models:
-        available_models = ["models/gemini-1.5-flash", "models/gemini-1.5-pro"]
+    # 기본 우선순위 정규 모델 명시
+    if not target_models:
+        target_models = ["models/gemini-2.0-flash", "models/gemini-1.5-flash", "models/gemini-1.5-pro"]
 
-    for m_name in available_models:
+    for m_name in target_models:
         try:
             model = genai.GenerativeModel(model_name=m_name, system_instruction=system_instruction)
             res = model.generate_content(prompt)
             if res and res.text:
-                text = res.text.strip()
-                if "📈" in text:
-                    text = "📈" + text.split("📈", 1)[1]
-                print(f"✅ AI 모델 ({m_name}) 호출 성공!")
-                return text.strip()
+                cleaned = sanitize_report_text(res.text)
+                if len(cleaned) > 200 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
+                    print(f"✅ 정규 AI 모델 ({m_name}) 호출 성공!")
+                    return cleaned
         except Exception as e:
-            print(f"⚠️ 모델 {m_name} 호출 에러: {e}")
+            print(f"⚠️ 모델 {m_name} 호출 실패 (쿼터/에러): {e}")
             time.sleep(1)
             continue
 
-    print("🚨 동적 프리미엄 리포트 엔진 발동 (실시간 데이터 결합)")
+    print("🚨 모든 정규 AI 쿼터 초과 - 100% 동적 프리미엄 리포트 엔진 발동")
     return build_dynamic_rich_fallback(global_data, naver_news, top_stocks, top_sectors)
 
 
@@ -364,9 +392,8 @@ def generate_unified_report(global_data, naver_news, top_stocks, top_sectors):
     - 실시간 주도 섹터: {top_sectors}
 
     [작성 요구사항]
-    - 장전 모드일 경우: 해외 증시 여파 분석 및 금일 장 시작 후 수급 쏠림 종목/섹터 예측 위주 작성
-    - 장후 모드일 경우: 금일 장 마감 결과, 실제 거래대금 폭발 종목 및 세력 수급 분석 위주 작성
-    - 100% 한국어로 일목요연하고 전문성 있게 작성할 것.
+    - 반드시 이모티콘(📈, 🌐, 📰, 🏢, 🎯, 🚀)과 중요도 별점(⭐⭐⭐)을 포함할 것.
+    - 영문 지시문이나 사고 과정을 절대 포함하지 말고 100% 한국어 리포트만 작성할 것.
     """
     return call_gemini_clean(prompt, global_data, naver_news, top_stocks, top_sectors)
 
