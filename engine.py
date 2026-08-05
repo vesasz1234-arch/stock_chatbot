@@ -117,11 +117,32 @@ def send_telegram_message(text_content):
         time.sleep(1)
 
 
+def split_text_smartly(text, max_length=1700):
+    """단락(\n\n) 또는 줄바꿈(\n) 기준으로 문맥 파괴 없이 메시지를 자르는 고급 분할 함수"""
+    paragraphs = text.split("\n\n")
+    chunks = []
+    current_chunk = ""
+
+    for p in paragraphs:
+        if len(current_chunk) + len(p) + 2 <= max_length:
+            current_chunk += (p + "\n\n")
+        else:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            current_chunk = p + "\n\n"
+
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+
+    return chunks
+
+
 def send_discord_message(text_content):
     if not DISCORD_WEBHOOK_URL:
         return
 
-    chunks = [text_content[i:i+1800] for i in range(0, len(text_content), 1800)]
+    # 스마트 단락 분할 적용 (마크다운 파괴 방지)
+    chunks = split_text_smartly(text_content, max_length=1700)
     headers = {"Content-Type": "application/json"}
 
     for idx, chunk in enumerate(chunks):
@@ -173,7 +194,7 @@ def fetch_market_intelligence():
     naver_news, top_stocks, top_sectors = [], [], []
     headers = {"User-Agent": "Mozilla/5.0"}
 
-    # 1. 네이버 주요 헤드라인 뉴스 (실시간 긁기)
+    # 1. 네이버 주요 헤드라인 뉴스
     try:
         res = requests.get("https://finance.naver.com/news/mainnews.naver", headers=headers, timeout=10)
         if res.status_code == 200:
@@ -187,7 +208,7 @@ def fetch_market_intelligence():
     except Exception as e:
         print(f"Naver 뉴스 에러: {e}")
 
-    # 2. 거래대금 상위 실시간 종목 수집
+    # 2. 거래대금 상위 실시간 종목
     try:
         res = requests.get("https://finance.naver.com/sise/sise_quant.naver?sosok=0", headers=headers, timeout=10)
         if res.status_code == 200:
@@ -205,7 +226,7 @@ def fetch_market_intelligence():
     except Exception as e:
         print(f"거래대금 종목 수집 에러: {e}")
 
-    # 3. 실시간 주도 섹터 수집
+    # 3. 실시간 주도 섹터
     try:
         res = requests.get("https://finance.naver.com/sise/sise_group.naver?type=upjong", headers=headers, timeout=10)
         if res.status_code == 200:
@@ -226,20 +247,14 @@ def fetch_market_intelligence():
 
 
 def build_dynamic_rich_fallback(global_data, naver_news, top_stocks, top_sectors):
-    """
-    하드코딩 단어(인버스, 2차전지, 바이오 등)를 전면 제거하고, 
-    수집된 실시간 시장 데이터 기반으로 100% 동적 결합하는 엔진
-    """
     macro_str = ", ".join([f"{k}: {v}" for k, v in global_data.items()]) if global_data else "글로벌 매크로 지표 변동성 유지"
     
-    # 뉴스 동적 바인딩
     clean_news = [n for n in naver_news if not re.search(r'[a-zA-Z]{6,}', n)]
     n1 = clean_news[0] if len(clean_news) > 0 else "미 연준 긴축 기조 및 매크로 지표 변동성 지속"
     n2 = clean_news[1] if len(clean_news) > 1 else "주요 핵심 섹터 실적 전망 및 수급 순환매 전개"
     n3 = clean_news[2] if len(clean_news) > 2 else "환율 및 국채 금리 추이에 따른 외국인 자구책 모색"
 
-    # 종목/섹터 동적 바인딩
-    stocks_str = "\n".join([f"   • {s}" for s in top_stocks[:5]]) if top_stocks else "   • 실시간 거래대금 상위 특징주 수급 집계 중"
+    stocks_str = "\n".join([f" • {s}" for s in top_stocks[:5]]) if top_stocks else " • 실시간 거래대금 상위 특징주 수급 집계 중"
     sectors_str = ", ".join(top_sectors[:4]) if top_sectors else "주요 주도 섹터 수급 순환매 진행"
 
     time_context = "장 시작 전 해외 증시 반영 및 수급 포커스" if is_morning else "금일 장 마감 기준 거래대금 및 수급 총결산"
@@ -289,7 +304,7 @@ def build_dynamic_rich_fallback(global_data, naver_news, top_stocks, top_sectors
 
 ---
 
-### 5. 🚀 [STOCK BOT] Tomorrow 실전 대응 전략
+### 5. 🚀 [STOCK BOT] 실전 대응 전략
 - **핵심 관전 포인트**: 🔍
     1. **환율 및 수급 반전 지점**: 외국인/기관 매수세 유입 전환 여부가 시장 반등의 핵심 척도입니다.
     2. **거래대금 유입 연속성**: 단발성 테마 형성인지, 연속적인 수급 유입인지 파악이 필수적입니다.
@@ -303,12 +318,11 @@ def call_gemini_clean(prompt, global_data, naver_news, top_stocks, top_sectors):
         f"너는 월스트리트저널(WSJ) 수석 에디터이자 골드만삭스 수석 분석가인 [STOCK BOT]이다. "
         f"너는 지금 {mode_title}을 작성 중이다. "
         f"답변은 오직 '📈 [STOCK BOT] 통합 프리미엄 시황 & 수급 브리핑 ({mode_title})'으로 시작해야 한다. "
-        f"절대 과거에 하드코딩된 특정 단어를 재탕하지 말고, 전달받은 최신 실시간 데이터를 바탕으로 "
-        f"월가급 완벽한 100% 한국어 최종 전문 리포트를 작성하라."
+        f"전달받은 최신 실시간 데이터를 바탕으로 월가급 완벽한 100% 한국어 최종 전문 리포트를 작성하라."
     )
     
-    # 최신 및 정규 Gemini 모델 우선순위 배열
-    models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
+    # 파이썬 Google Generative AI 최신 표준 모델명 호환 레이어
+    models = ["gemini-1.5-flash", "gemini-1.5-pro", "models/gemini-1.5-flash"]
     
     for m in models:
         try:
@@ -322,10 +336,10 @@ def call_gemini_clean(prompt, global_data, naver_news, top_stocks, top_sectors):
                 return text.strip()
         except Exception as e:
             print(f"⚠️ 모델 {m} 호출 에러: {e}")
-            time.sleep(2) # Quota 차단 방지용 딜레이
+            time.sleep(1)
             continue
 
-    print("🚨 모든 AI 모델 쿼터 초과/호출 불가 - 100% 동적 리포트 엔진 발동")
+    print("🚨 동적 프리미엄 리포트 엔진 발동 (실시간 데이터 결합)")
     return build_dynamic_rich_fallback(global_data, naver_news, top_stocks, top_sectors)
 
 
