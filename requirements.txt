@@ -1,0 +1,6 @@
+requests
+beautifulsoup4
+google-generativeai
+yfinance
+python-dotenv
+pillow
