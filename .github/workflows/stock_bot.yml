@@ -1,18 +1,18 @@
-name: Stock Bot Scheduled Report
+name: Stock Bot Automation Pipeline
 
 on:
   schedule:
-    # 1. 한국 시간 07:30 (UTC 기준 22:30 전날)
-    - cron: '30 22 * * *'
-    # 2. 한국 시간 16:00 (UTC 기준 07:00 당일)
-    - cron: '0 7 * * *'
-  workflow_dispatch: # GitHub 웹페이지에서 수동 실행 버튼 활성화
+    # 1. 장전 리포트: 한국시간 오전 8:00 (UTC 전날 23:00)
+    - cron: '0 23 * * 0-4'
+    # 2. 장후 리포트: 한국시간 오후 6:00 (UTC 당일 09:00)
+    - cron: '0 9 * * 1-5'
+  workflow_dispatch: # GitHub 웹에서 수동 실행 허용
 
 jobs:
   run-stock-bot:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -23,13 +23,25 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install google-generativeai requests beautifulsoup4 yfinance pandas
+          pip install -r requirements.txt
 
-      - name: Run Engine
+      # 한국 시간 기준 실행 시각 계산 후 적절한 모드로 실행
+      - name: Run Stock Bot Engine
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
           KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
-        run: python engine.py
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          # 현재 KST 시간 구하기 (UTC + 9시간)
+          KST_HOUR=$(TZ=Asia/Seoul date +%H)
+          
+          if [ $KST_HOUR -lt 12 ]; then
+            echo "🌅 장전 모드로 실행합니다."
+            python engine.py --mode morning
+          else
+            echo "🌆 장후 모드로 실행합니다."
+            python engine.py --mode evening
+          fi
