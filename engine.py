@@ -70,7 +70,6 @@ def fetch_krx_market_summary():
     krx_data = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # 1. KOSPI 수집
     try:
         res = requests.get("https://finance.naver.com/sise/sise_index.naver?code=KOSPI", headers=headers, timeout=5)
         if res.status_code == 200:
@@ -83,7 +82,6 @@ def fetch_krx_market_summary():
     except Exception as e:
         print(f"⚠️ KOSPI 수집 에러: {e}")
 
-    # 2. KOSDAQ 수집
     try:
         res = requests.get("https://finance.naver.com/sise/sise_index.naver?code=KOSDAQ", headers=headers, timeout=5)
         if res.status_code == 200:
@@ -96,7 +94,6 @@ def fetch_krx_market_summary():
     except Exception as e:
         print(f"⚠️ KOSDAQ 수집 에러: {e}")
 
-    # 3. 투자자 동향 수집
     try:
         res_sise = requests.get("https://finance.naver.com/sise/", headers=headers, timeout=5)
         if res_sise.status_code == 200:
@@ -203,13 +200,17 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
         print("⚠️ GEMINI_API_KEY 없음 - 백업 엔진을 가동합니다.")
         return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
 
+    # API 키 검증 디버깅 출력 (★필수 확인★)
+    key_preview = f"{GEMINI_API_KEY[:8]}...{GEMINI_API_KEY[-4:]}" if len(GEMINI_API_KEY) > 12 else "INVALID_KEY"
+    print(f"🔑 [DEBUG] 현재 구동 중인 GEMINI_API_KEY: {key_preview}")
+
     system_instruction = (
         f"너는 월스트리트 헤드쿼터의 수석 마켓 전략가이자 블룸버그 특파원인 [STOCK BOT]이다.\n"
         f"단순 시세 수치나 뉴스 제목 나열은 가치가 없는 쓰레기 브리핑이다. 거시경제 매크로 파급 경로, 미 국채금리와 기술주 밸류에이션 할인율(Multiple), 외인/기관의 파생시장 하방 델타 헤지 성격 등 월가 최고 수준의 통찰력과 인과관계를 정교하게 분석하라.\n"
         f"답변은 반드시 '📈 **[STOCK BOT] 블룸버그 프리미엄 {'장전 모닝' if is_morning else '마감 시황'} 브리핑**'으로 시작하라.\n"
         f"제공된 [실제 수집 데이터]의 수치를 절대 왜곡하거나 지어내지 마라(할루시네이션 금지).\n"
         f"중요도 표기 시 반드시 [3성급★★★] 형태로 정갈하게 출력하여 문자가 깨지지 않게 하라.\n"
-        f"다음 5개 파트를 월가 최고 투자 저널 어조로 완성하라:\n"
+        f"다음 5개 파트를 월가 최고 투자 저널 어조로 작성하라:\n"
         f"1. 🌐 글로벌 매크로 & 국내 증시 스코어카드 (Macro Dashboard)\n"
         f"2. 📰 [3성급★★★] 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)\n"
         f"3. 🏢 [3성급★★★] 핵심 기업 실적 & 주도 섹터 (Capital Flow Analysis)\n"
@@ -226,39 +227,37 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
     target_models = [
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
     ]
 
     for m_name in target_models:
-        for attempt in range(2):
-            try:
-                response = client.models.generate_content(
-                    model=m_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        temperature=0.6,
-                    )
+        try:
+            response = client.models.generate_content(
+                model=m_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.6,
                 )
-                if response and response.text:
-                    cleaned = sanitize_report_text(response.text)
-                    if len(cleaned) > 400 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
-                        print(f"✅ [SUCCESS] 월가 AI 모델 ({m_name}) 프리미엄 리포트 생성 완료!")
-                        return cleaned
-            except Exception as e:
-                err_msg = str(e)
-                print(f"⚠️ 모델 {m_name} 호출 에러 (시도 {attempt+1}): {err_msg}")
-                if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                    print(f"⏳ {m_name} 쿼터 제한 - 10초 대기 후 재시도...")
-                    time.sleep(10)
-                else:
-                    break
+            )
+            if response and response.text:
+                cleaned = sanitize_report_text(response.text)
+                if len(cleaned) > 400 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
+                    print(f"✅ [SUCCESS] 월가 AI 모델 ({m_name}) 프리미엄 리포트 생성 완료!")
+                    return cleaned
+        except Exception as e:
+            err_msg = str(e)
+            print(f"⚠️ 모델 {m_name} 호출 에러: {err_msg[:120]}...")
+            time.sleep(2)
+            continue
 
     print("🚨 모든 AI 모델 호출 불가 - 백업 엔진 가동")
     return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
 
 
 def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors):
-    """골드만삭스/블룸버그 특파원급 백업 분석 엔진 (서식 완벽 보정)"""
+    """골드만삭스/블룸버그 특파원급 백업 분석 엔진"""
     kospi_info = krx_data.get("KOSPI", "6,258.77 (37.61 -0.60%)")
     kosdaq_info = krx_data.get("KOSDAQ", "798.81 (2.86 -0.36%)")
     supply_info = krx_data.get("KOSPI_투자자동향", "외인 순매도 전환, 기관 파생 헤지물량 출하")
