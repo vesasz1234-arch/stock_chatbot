@@ -23,7 +23,13 @@ URL_BASE = "https://openapi.koreainvestment.com:9443"
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or "8612239847:AAFLgGhtJm8cOS9-eaW4wsSsQO2-9bWW0Qw"
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "-1004358276766"
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL") or "https://discordapp.com/api/webhooks/1534114852082155574/ggvSBAoyDs1JbPwW7V8hEWTRVX-5MCTzduMiqv0mxKEp5hLoZOsZ1TXDRzo8-cNdE6bW"
+
+# [유료 알파봇 전용 디스코드 웹후크 URL - #🤖-알파-시그널 채널용]
+DISCORD_WEBHOOK_URL = (
+    os.environ.get("DISCORD_ALPHA_WEBHOOK_URL")
+    or os.environ.get("DISCORD_WEBHOOK_URL")
+    or "https://discordapp.com/api/webhooks/1534112008767803433/B1S87u-nnaokeMR2lut-FAPv1PJAbeVuQunoWr-4AoZfrG4g70XwhuD8PATpApYgeFt1"
+)
 
 class StockAlphaBot:
     def __init__(self, top_n=200):
@@ -56,7 +62,7 @@ class StockAlphaBot:
         try:
             res = requests.post(DISCORD_WEBHOOK_URL, data=json.dumps(payload), headers=headers, timeout=5)
             if res.status_code in [200, 204]:
-                print("✅ [디스코드] 알파 시그널 송출 완료!")
+                print("✅ [디스코드] 유료 알파 시그널 채널 송출 완료!")
         except Exception as e:
             print(f"❌ 디스코드 송신 오류: {e}")
 
@@ -80,7 +86,7 @@ class StockAlphaBot:
     def check_kospi_regime(self):
         try:
             now_kst = datetime.datetime.now(KST)
-            df_k = fdr.DataReader('KS11', now_kst - datetime.timedelta(days=40))
+            df_k = fdr.DataReader('KS11', now_kst - datetime.timedelta(days=60))
             if df_k.empty or len(df_k) < 20:
                 return True
             df_k['MA20'] = df_k['Close'].rolling(20).mean()
@@ -110,9 +116,10 @@ class StockAlphaBot:
     def scan_stock_alpha(self, name: str, ticker: str):
         try:
             now_kst = datetime.datetime.now(KST)
-            start_dt = (now_kst - datetime.timedelta(days=45)).strftime("%Y-%m-%d")
+            # ATR 지표 계산 안정화를 위한 90일 데이터 수집
+            start_dt = (now_kst - datetime.timedelta(days=90)).strftime("%Y-%m-%d")
             df = fdr.DataReader(ticker, start_dt)
-            if df.empty or len(df) < 20:
+            if df.empty or len(df) < 35:
                 return
 
             df['MA5'] = df['Close'].rolling(5).mean()
@@ -129,7 +136,11 @@ class StockAlphaBot:
             ], axis=1).max(axis=1)
             df['ATR14'] = tr.rolling(14).mean()
             df['ATR_MA20'] = df['ATR14'].rolling(20).mean()
-            df['ATR_Ratio'] = df['ATR14'] / (df['ATR_MA20'] + 1e-9)
+            
+            # NaN 방지 보정 코드
+            atr_ma20_val = df['ATR_MA20'].iloc[-1] if not pd.isna(df['ATR_MA20'].iloc[-1]) else df['ATR14'].iloc[-1]
+            atr_ratio_val = df['ATR14'].iloc[-1] / (atr_ma20_val + 1e-9) if atr_ma20_val > 0 else 1.0
+            df['ATR_Ratio'] = atr_ratio_val
 
             std20 = df['Close'].rolling(20).std()
             df['BB_Upper'] = df['MA20'] + (std20 * 2.0)
