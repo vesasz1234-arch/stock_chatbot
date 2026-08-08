@@ -60,7 +60,7 @@ DISCORD_WEBHOOK_URL = (
 
 
 def fetch_krx_market_summary():
-    """국내 증시 핵심 지수(KOSPI, KOSDAQ) 및 실시간 외인/기관 수급 정밀 수집"""
+    """국내 증시 핵심 지수(KOSPI, KOSDAQ) 및 실시간 외인/기관 수급 수치 정밀 수집"""
     krx_data = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
@@ -191,29 +191,55 @@ def fetch_market_intelligence():
 
 
 # =========================================================
-# 🤖 1순위 AI: OpenRouter (DeepSeek-R1 / Qwen 2.5 72B)
+# 🤖 OpenRouter 동적 모델 탐색 및 스마트 자동 연결 Engine
 # =========================================================
+def get_openrouter_working_models():
+    """OpenRouter API에서 현재 가동 중인 최신 무료/고성능 모델 동적 수집"""
+    fallback_models = [
+        "google/gemini-2.0-flash-lite-001",
+        "google/gemini-2.0-flash-exp:free",
+        "meta-llama/llama-3.3-70b-instruct",
+        "qwen/qwen-2.5-72b-instruct",
+        "deepseek/deepseek-chat"
+    ]
+    if not OPENROUTER_API_KEY:
+        return fallback_models
+
+    try:
+        res = requests.get("https://openrouter.ai/api/v1/models", timeout=5)
+        if res.status_code == 200:
+            data = res.json().get("data", [])
+            free_models = []
+            for m in data:
+                m_id = m.get("id", "")
+                pricing = m.get("pricing", {})
+                is_free = (pricing.get("prompt") == "0" or ":free" in m_id)
+                if is_free and ("gemini" in m_id or "llama" in m_id or "qwen" in m_id or "deepseek" in m_id):
+                    free_models.append(m_id)
+            if free_models:
+                print(f"🔍 [OpenRouter] 동적 탐색 성공 - 가용 무료 모델 {len(free_models)}개 확보")
+                return free_models + fallback_models
+    except Exception as e:
+        print(f"⚠️ OpenRouter 동적 모델 조회 실패: {e}")
+
+    return fallback_models
+
+
 def call_openrouter_ai(prompt, system_instruction):
     if not OPENROUTER_API_KEY:
         print("⚠️ OPENROUTER_API_KEY 없음 - OpenRouter 스킵")
         return None
 
-    key_preview = f"{OPENROUTER_API_KEY[:8]}...{OPENROUTER_API_KEY[-4:]}" if len(OPENROUTER_API_KEY) > 12 else "INVALID_KEY"
-    print(f"🚀 [OpenRouter AI Engine] 월가 최고급 추론 AI 가동 중... (Key: {key_preview})")
-
+    print("🚀 [OpenRouter AI Engine] 스마트 최적화 동적 모델 가동 중...")
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    models = [
-        "deepseek/deepseek-r1:free",
-        "qwen/qwen-2.5-72b-instruct:free",
-        "meta-llama/llama-3.3-70b-instruct:free"
-    ]
+    models_to_try = get_openrouter_working_models()
 
-    for model_name in models:
+    for model_name in models_to_try:
         payload = {
             "model": model_name,
             "messages": [
@@ -224,30 +250,27 @@ def call_openrouter_ai(prompt, system_instruction):
             "max_tokens": 3000
         }
         try:
-            res = requests.post(url, headers=headers, json=payload, timeout=35)
+            res = requests.post(url, headers=headers, json=payload, timeout=25)
             if res.status_code == 200:
                 data = res.json()
                 text = data["choices"][0]["message"]["content"]
                 cleaned = sanitize_report_text(text)
                 if len(cleaned) > 500:
-                    print(f"✅ [SUCCESS] OpenRouter ({model_name}) 월가 리포트 생성 완료!")
+                    print(f"✅ [SUCCESS] OpenRouter ({model_name}) 월가 시황 리포트 생성 완료!")
                     return cleaned
             else:
-                print(f"⚠️ OpenRouter {model_name} 오류 ({res.status_code}): {res.text[:120]}")
+                print(f"⚠️ OpenRouter {model_name} 실패 ({res.status_code}) - 다음 모델로 우회")
         except Exception as e:
-            print(f"⚠️ OpenRouter {model_name} 예외: {e}")
+            print(f"⚠️ OpenRouter {model_name} 호출 예외 - 우회 진행")
     return None
 
 
-# =========================================================
-# 🤖 2순위 AI: Groq (Llama-3.3-70B - 언어 가드레일 제어)
-# =========================================================
 def call_groq_ai(prompt, system_instruction):
     if not GROQ_API_KEY:
         print("⚠️ GROQ_API_KEY 없음 - Groq 스킵")
         return None
 
-    print("🚀 [Groq AI Engine] Llama-3.3-70B 언어 가드레일 가동 중...")
+    print("🚀 [Groq AI Engine] Llama-3.3-70B 하드코딩 월가 가드레일 가동 중...")
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -270,7 +293,7 @@ def call_groq_ai(prompt, system_instruction):
             text = data["choices"][0]["message"]["content"]
             cleaned = sanitize_report_text(text)
             if len(cleaned) > 500:
-                print("✅ [SUCCESS] Groq Llama-3.3-70B 월가 리포트 생성 완료!")
+                print("✅ [SUCCESS] Groq Llama-3.3-70B 월가 시황 리포트 생성 완료!")
                 return cleaned
         else:
             print(f"⚠️ Groq API 오류 ({res.status_code}): {res.text[:120]}")
@@ -281,58 +304,54 @@ def call_groq_ai(prompt, system_instruction):
 
 def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top_sectors):
     system_instruction = (
-        "너는 골드만삭스/블룸버그 수석 마켓 전략가이자 헤지펀드 최고투자책임자(CIO)인 [STOCK BOT]이다.\n"
-        "너의 목적은 기관 및 고액자산가를 위한 월가 최고 레벨의 정밀 시황 리포트를 작성하는 것이다.\n\n"
-        "[언어 및 문자 절대 금지 규칙 - 위반 시 무효 처리]\n"
-        "1. 절대로 일본어 한자(漢字, 예: 需求, 圧力, 影響), 일본어 가타카나(예: リスク), 베트남어, 중국어를 쓰지 마라. 오직 100% 매끄럽고 품격 있는 한국어 금융 문장으로 작성하라.\n"
-        "2. 등락률 표기 시 제공된 숫자의 부호를 엄격히 지켜라 (-0.60%에 '상승' 표기 금지).\n\n"
-        "[필수 거시경제 금융 가드레일]\n"
-        "1. 원/달러 환율 하락(원화 강세) = 수출 기업 환차손 및 가격경쟁력 부담, 원자재/부품 수입 기업 원가 절감 수혜.\n"
-        "2. 원/달러 환율 상승(원화 약세) = 외국인 환차손 우려로 인한 매도 압력, 수출 기업 단기 매출 환산 착시 수혜.\n"
-        "3. 미 10년물 국채금리 하락 = 할인율(Multiple) 상방 압력 완화 -> 고PER 기술주/빅테크 밸류에이션 경감.\n"
-        "4. VIX 변동성 지수 및 달러 인덱스(DXY) 변화에 따른 월가 기관의 Volatility Control 펀드 수급 추론을 명시하라.\n"
-        "5. [전술적 자산 배분] 섹션에서는 '현금 비중 35% 확보', '반도체 벨류체인 분할 매수' 등 명확하고 구체적인 숫자 중심의 포트폴리오 대응책을 제시하라.\n\n"
-        "[출력 마크다운 양식 규격 - 절대 준수]\n"
+        "너는 골드만삭스/블룸버그 수석 마켓 전략가이자 최고투자책임자(CIO)인 [STOCK BOT]이다.\n"
+        "초보자용 교과서성 설명('~때문이다', '~여지를 제공한다', '~요약할 수 있다')을 절대 금지한다. 기관 투자가와 헤지펀드를 위한 최상위 마켓 인텔리전스를 제시하라.\n\n"
+        "[월가 금융 메커니즘 절대 가드레일]\n"
+        "1. 원/달러 환율 하락(원화 강세) = 수출 대형주 환차손 부담 및 실적 하향 압력 / 원자재 수입주 원가 부담 개선. 절대로 '환차손을 줄여준다'거나 '수출에 긍정적'이라는 허위 분석을 작성하지 마라.\n"
+        "2. 미 국채 10년물 금리 하락 = 할인율(Multiple) 상방 압력 완화로 빅테크/성장주 멀티플 확장(Multiple Expansion) 요인.\n"
+        "3. VIX 지수 및 DXY 변동 = Volatility Control 펀드 및 CTA(추세추종) 헤지펀드의 계량적 수급 이탈/유입 인과관계를 기술하라.\n"
+        "4. 언어 규칙 = 일본어 한자(漢字, 예: 需求, 圧力, 影響), 가타카나, 베트남어가 단 한 글자도 유출되지 않도록 100% 매끄럽고 서열화된 한국어 금융 어조로 작성하라.\n"
+        "5. 전략 제언 = '현금 비중 35% 확보', 'HBM/AI 반도체 벨류체인 눌림목 분할 매수', '선물 인버스 델타 헤징' 등 구체적인 수치 기반 액션 플랜만 출력하라.\n\n"
+        "[출력 규격 양식]\n"
         "📈 **[STOCK BOT] 블룸버그 프리미엄 마감 시황 브리핑**\n\n"
         "---\n\n"
         "### 1. 🌐 글로벌 매크로 & 국내 증시 스코어카드 (Macro Dashboard)\n"
         "• **국내 증시 현황**: KOSPI **[치]** | KOSDAQ **[치]**\n"
-        "• **시장 수급 메커니즘**: [수급 수치 기반 외인/기관 동향 분석]\n"
+        "• **시장 수급 메커니즘**: [외인/기관 수급 금액 기반 시장 매도/매수 포지셔닝 분석]\n"
         "• **글로벌 벤치마크 지표**: S&P 500 **[치]**, NASDAQ **[치]**, 야간선물(S&P500 **[치]** / NQ **[치]**), VIX **[치]**, DXY **[치]**, 미 10년물 금리 **[치]**, 원/달러 환율 **[치]**, WTI 유가 **[치]**, 금 선물 **[치]**, 비트코인 **[치]**\n\n"
         "---\n\n"
         "### 2. 📰 [3성급★★★] 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)\n"
-        "• **이슈 1: [금리 및 기술주 Multiple 인과관계]**\n"
-        "  - **메커니즘 분석**: [국채금리와 기술주 밸류에이션 정밀 추론]\n"
-        "• **이슈 2: [환율 및 외국인 수급 변동성]**\n"
-        "  - **월가 시각**: [환율 변동이 외국인 파생/현물 수급 및 수출 기업 수익성에 미치는 영향]\n\n"
+        "• **이슈 1: [금리 및 성장주 Multiple Expansion/Compression]**\n"
+        "  - **메커니즘 분석**: [국채금리와 빅테크 밸류에이션 간의 정밀 인과관계 추론]\n"
+        "• **이슈 2: [환율 변동성과 외인 파생 포지셔닝]**\n"
+        "  - **월가 시각**: [환율 변동이 외국인 현물/선물 델타 포지션 및 수출 대형주에 미치는 실질 영향]\n\n"
         "---\n\n"
         "### 3. 🏢 [3성급★★★] 핵심 기업 실적 & 주도 섹터 (Capital Flow Analysis)\n"
-        "• **주도 강세 섹터**: [수급 쏠림 섹터 분석]\n"
-        "• **거래대금 집중 종목 및 수급 특징**: [상위 거래 종목 분석 및 인버스/레버리지 메커니즘 추론]\n\n"
+        "• **주도 강세 섹터**: [자금 집결 섹터 및 실적 모멘텀 분석]\n"
+        "• **거래대금 집중 종목 및 수급 특징**: [거래대금 상위 종목 수급 해석 및 인버스/레버리지 메커니즘]\n\n"
         "---\n\n"
         "### 4. 🎯 [3성급★★★] 원자재, 환율 & 자산시장 시사점 (Alternative Risk)\n"
-        "• **금/유가 시사점**: [원자재 상승과 인플레이션, 실물 안전자산 선호 분석]\n\n"
+        "• **금/유가 시사점**: [지정학적 리스크, 인플레이션 전가력 및 실물 안전자산 선호 분석]\n\n"
         "---\n\n"
         "### 5. 🚀 [Goldman Sachs Strategist] 내일의 전술적 자산 배분 대응 전략\n"
-        "• **포트폴리오 리스크 관리**: [구체적인 현금 비중(%) 및 섹터별 비중 조절, 헤징 액션 플랜]"
+        "• **포트폴리오 리스크 관리**: [구체적인 현금 비중(%) 및 포지션 조절, 델타 헤지 액션 플랜]"
     )
 
-    # 1. OpenRouter (DeepSeek R1 / Qwen 2.5) 1순위 실행
+    # 1. OpenRouter 동적 모델 1순위 가동
     openrouter_res = call_openrouter_ai(prompt, system_instruction)
     if openrouter_res:
         return openrouter_res
 
-    # 2. Groq (Llama 3.3 70B) 2순위 실행
+    # 2. Groq 2순위 가동
     groq_res = call_groq_ai(prompt, system_instruction)
     if groq_res:
         return groq_res
 
-    # 3. Gemini 3순위 실행
+    # 3. Gemini 3순위 가동
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
-            target_models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
-            for m_name in target_models:
+            for m_name in ["gemini-2.0-flash", "gemini-2.0-flash-lite"]:
                 try:
                     response = client.models.generate_content(
                         model=m_name,
@@ -352,7 +371,7 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
         except Exception as e:
             print(f"⚠️ Gemini Client 생성 실패: {e}")
 
-    # 4. 최후의 비상 템플릿
+    # 4. 백업 템플릿
     print("🚨 모든 AI 모델 호출 불가 - 비상 템플릿 가동")
     return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
 
@@ -444,7 +463,7 @@ def generate_unified_report(krx_data, global_data, naver_news, top_stocks, top_s
     아래 실시간 수집 데이터를 바탕으로, 각 지표와 사건 간의 월가급 금융 메커니즘을 정밀 추론하여 가독성이 뛰어난 전문 리포트를 작성하라.
 
     [수집된 실시간 시장 데이터]
-    - 국내 증시 현황 및 수급: {krx_data}
+    - 국내 증시 현황 및 수급 금액: {krx_data}
     - 해외 주요 매크로 지표 (VIX/DXY/야간선물 포함): {global_data}
     - 헤드라인 핵심 뉴스: {naver_news}
     - 거래대금 상위 종목: {top_stocks}
