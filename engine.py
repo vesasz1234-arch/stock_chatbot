@@ -67,10 +67,11 @@ if os.path.exists("kakao_token.json"):
 
 
 def fetch_krx_market_summary():
-    """국내 증시 핵심 지수(KOSPI, KOSDAQ) 및 수급 정밀 수집"""
+    """국내 증시 핵심 지수(KOSPI, KOSDAQ) 및 실시간 외인/기관 수급 정밀 수집"""
     krx_data = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
+    # 1. KOSPI 수집
     try:
         res = requests.get("https://finance.naver.com/sise/sise_index.naver?code=KOSPI", headers=headers, timeout=5)
         if res.status_code == 200:
@@ -83,6 +84,7 @@ def fetch_krx_market_summary():
     except Exception as e:
         print(f"⚠️ KOSPI 수집 에러: {e}")
 
+    # 2. KOSDAQ 수집
     try:
         res = requests.get("https://finance.naver.com/sise/sise_index.naver?code=KOSDAQ", headers=headers, timeout=5)
         if res.status_code == 200:
@@ -95,18 +97,16 @@ def fetch_krx_market_summary():
     except Exception as e:
         print(f"⚠️ KOSDAQ 수집 에러: {e}")
 
+    # 3. KOSPI 투자자별 매매동향 (개인/외국인/기관 순매수 수치 정밀 추출)
     try:
         res_sise = requests.get("https://finance.naver.com/sise/", headers=headers, timeout=5)
         if res_sise.status_code == 200:
             soup_sise = BeautifulSoup(res_sise.text, "html.parser")
             kospi_tab = soup_sise.select_one("#num2")
             if kospi_tab:
-                supply_items = [
-                    li.get_text().strip().replace("\n", "").replace("\t", "")
-                    for li in kospi_tab.select("li")
-                ]
-                if supply_items:
-                    krx_data["KOSPI_투자자동향"] = ", ".join(supply_items)
+                items = [li.get_text().strip().replace("\n", "").replace("\t", "") for li in kospi_tab.select("li")]
+                if items:
+                    krx_data["KOSPI_투자자동향"] = ", ".join(items)
     except Exception as e:
         print(f"⚠️ KRX 수급 수집 에러: {e}")
 
@@ -114,10 +114,12 @@ def fetch_krx_market_summary():
 
 
 def fetch_global_yahoo_data():
-    """글로벌 매크로 지표 정밀 수집"""
+    """글로벌 매크로 지표 및 미국 야간 선물 지수 정밀 수집"""
     tickers = {
         "S&P 500": "^GSPC",
         "NASDAQ": "^IXIC",
+        "S&P500 선물": "ES=F",
+        "나스닥100 선물": "NQ=F",
         "미 10년물 국채금리": "^TNX",
         "원/달러 환율": "KRW=X",
         "WTI 유가": "CL=F",
@@ -197,13 +199,13 @@ def fetch_market_intelligence():
 
 
 def call_groq_ai(prompt, system_instruction):
-    """보조 AI 엔진: Groq API (Llama 3.3 70B) 고성능 분석 가동"""
+    """보조 AI 엔진: Groq API (Llama 3.3 70B) 고성능 금융 가드레일 가동"""
     if not GROQ_API_KEY:
         print("⚠️ GROQ_API_KEY 미설정 - Groq 엔진을 스킵합니다.")
         return None
 
     key_preview = f"{GROQ_API_KEY[:8]}...{GROQ_API_KEY[-4:]}" if len(GROQ_API_KEY) > 12 else "INVALID_KEY"
-    print(f"🚀 [Groq AI Engine] Llama-3.3-70B 월가 고급 프롬프트 가동 중... (Key: {key_preview})")
+    print(f"🚀 [Groq AI Engine] Llama-3.3-70B 월가 고급 가드레일 가동 중... (Key: {key_preview})")
 
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
@@ -216,7 +218,7 @@ def call_groq_ai(prompt, system_instruction):
             {"role": "system", "content": system_instruction},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.5,
+        "temperature": 0.3,
         "max_tokens": 3000
     }
 
@@ -238,35 +240,41 @@ def call_groq_ai(prompt, system_instruction):
 
 def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top_sectors):
     system_instruction = (
-        "너는 골드만삭스, 블룸버그 수석 마켓 전략가이자 헤지펀드 최고투자책임자(CIO)인 [STOCK BOT]이다.\n"
-        "초보자용 요약이나 단순 사실 나열은 절대 금지한다. 기관 수급, 할인율(Multiple), 파생시장 델타 헤징, 금리 커브 및 원자재 인과관계를 월가 최상위 인스티튜셔널 저널 수준으로 정밀 분석하라.\n\n"
-        "[출력 규격 및 가독성 필수 지침]\n"
-        "1. 반드시 아래 5개 구분선(`---`)과 헤더 구조(`###`)를 정확히 유지하라. 문단을 한 글로 뭉개지 말고 불렛포인트(`•`)와 줄바꿈을 적극 활용하라.\n"
-        "2. 중요 지표와 숫자는 반드시 **강조(Bold)** 처리하라.\n"
-        "3. '그린뉴딜', '상승해서 상승했다' 같은 구식/초보자용 표현은 절대 사용하지 마라.\n\n"
-        "작성 서식 예시:\n"
-        "📈 **[STOCK BOT] 블룸버그 프리미엄 마감 시황 브리핑**\n\n"
-        "---\n\n"
-        "### 1. 🌐 글로벌 매크로 & 국내 증시 스코어카드 (Macro Dashboard)\n"
-        "• **국내 증시**: KOSPI **[치]** | KOSDAQ **[치]**\n"
-        "• **수급 메커니즘**: [외인/기관 동향 분석]\n"
-        "• **글로벌 지표**: S&P500 **[치]**, NASDAQ **[치]**, 미 10년물 금리 **[치]**, 환율 **[치]**\n\n"
-        "---\n\n"
-        "### 2. 📰 [3성급★★★] 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)\n"
-        "• **이슈 1**: [헤드라인 분석]\n"
-        "  - **메커니즘 분석**: [금리와 기술주 밸류에이션 인과관계 분석]\n"
-        "• **이슈 2**: [수급 분석]\n"
-        "  - **월가 시각**: [환율 및 외국인 선물/옵션 파생 헤지 동향 분석]\n\n"
-        "---\n\n"
-        "### 3. 🏢 [3성급★★★] 핵심 기업 실적 & 주도 섹터 (Capital Flow Analysis)\n"
-        "• **주도 강세 섹터**: [섹터명 및 수급 원인]\n"
-        "• **거래대금 집중 종목**: [종목 분석 및 인버스/레버리지 수급 의도 추론]\n\n"
-        "---\n\n"
-        "### 4. 🎯 [3성급★★★] 원자재, 환율 & 자산시장 시사점 (Alternative Risk)\n"
-        "• **금/유가 시사점**: [지정학적 리스크 및 인플레이션 원가 전가력 분석]\n\n"
-        "---\n\n"
-        "### 5. 🚀 [Goldman Sachs Strategist] 내일의 전술적 자산 배분 대응 전략\n"
-        "• **포트폴리오 리스크 관리**: [현금 비중 및 전략적 세부 액션 플랜 제시]"
+        f"너는 골드만삭스/블룸버그 수석 마켓 전략가이자 헤지펀드 최고투자책임자(CIO)인 [STOCK BOT]이다.\n"
+        f"너의 목적은 기관 및 고액자산가를 위한 월가 최고 레벨의 정밀 시황 리포트를 작성하는 것이다.\n\n"
+        f"[필수 거시경제 금융 가드레일 - 오류 시 해고]\n"
+        f"1. 원/달러 환율 하락(원화 강세) = 수출 기업 환차손 및 가격경쟁력 부담, 원자재/부품 수입 기업 원가 절감 수혜. 절대로 '환율 하락이 수출 경쟁력을 제고한다'고 쓰지 마라.\n"
+        f"2. 원/달러 환율 상승(원화 약세) = 외국인 환차손 우려로 인한 매도 압력, 수출 기업 단기 매출 환산 착시 수혜.\n"
+        f"3. 미 10년물 국채금리 하락 = 할인율(Multiple) 상방 압력 완화 -> 고PER 기술주/빅테크 밸류에이션 경감.\n"
+        f"4. 미 10년물 국채금리 상승 = 할인율 상승 -> 기술주 멀티플 축소(Multiple Compression) 압박.\n"
+        f"5. 제공된 숫자와 등락률 부호를 엄격히 지켜라(마이너스 비율에 '상승' 표기 금지).\n"
+        f"6. 100% 품격 있는 한국어 금융 저널리즘 어조를 유지하라. 외국어 오타(베트남어, 영어 혼용)나 '그린뉴딜' 같은 구식 표현을 절대 포함하지 마라.\n"
+        f"7. '데이터가 부족하여 알 수 없으나' 같은 피하기성 문장을 절대 쓰지 마라. 주어진 수급 금액과 지수를 바탕으로 세력의 하방 헤지 및 수급 쏠림을 정교히 추론하라.\n"
+        f"8. [5. 전술적 자산 배분] 섹션에서는 '현금 비중 35% 확보', '반도체 벨류체인 분할 매수' 등 명확하고 구체적인 숫자 중심의 포트폴리오 대응책을 제시하라.\n\n"
+        f"[출력 마크다운 양식 규격 - 절대 준수]\n"
+        f"답변은 반드시 아래 구분선(`---`)과 헤더 양식을 완벽히 준수하라:\n\n"
+        f"📈 **[STOCK BOT] 블룸버그 프리미엄 {'장전 모닝' if is_morning else '마감 시황'} 브리핑**\n\n"
+        f"---\n\n"
+        f"### 1. 🌐 글로벌 매크로 & 국내 증시 스코어카드 (Macro Dashboard)\n"
+        f"• **국내 증시 현황**: KOSPI **[치]** | KOSDAQ **[치]**\n"
+        f"• **시장 수급 메커니즘**: [수급 수치 기반 외인/기관 동향 분석]\n"
+        f"• **글로벌 벤치마크 지표**: S&P 500 **[치]**, NASDAQ **[치]**, 야간선물(S&P500 **[치]** / NQ **[치]**), 미 10년물 금리 **[치]**, 원/달러 환율 **[치]**, WTI 유가 **[치]**, 금 선물 **[치]**, 비트코인 **[치]**\n\n"
+        f"---\n\n"
+        f"### 2. 📰 [3성급★★★] 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)\n"
+        f"• **이슈 1: [금리 및 기술주 밸류에이션 인과관계]**\n"
+        f"  - **메커니즘 분석**: [국채금리와 기술주 Multiple 간 정밀 추론]\n"
+        f"• **이슈 2: [환율 및 외국인 수급 변동성]**\n"
+        f"  - **월가 시각**: [환율 변동이 외국인 파생/현물 수급 및 수출 기업 수익성에 미치는 영향]\n\n"
+        f"---\n\n"
+        f"### 3. 🏢 [3성급★★★] 핵심 기업 실적 & 주도 섹터 (Capital Flow Analysis)\n"
+        f"• **주도 강세 섹터**: [수급 쏠림 섹터 분석]\n"
+        f"• **거래대금 집중 종목 및 수급 특징**: [상위 거래 종목 분석 및 인버스/레버리지 메커니즘 추론]\n\n"
+        f"---\n\n"
+        f"### 4. 🎯 [3성급★★★] 원자재, 환율 & 자산시장 시사점 (Alternative Risk)\n"
+        f"• **금/유가 시사점**: [원자재 상승과 인플레이션, 실물 안전자산 선호 분석]\n\n"
+        f"---\n\n"
+        f"### 5. 🚀 [Goldman Sachs Strategist] 내일의 전술적 자산 배분 대응 전략\n"
+        f"• **포트폴리오 리스크 관리**: [구체적인 현금 비중(%) 및 섹터별 비중 조절, 헤징 액션 플랜]"
     )
 
     # 1. Gemini AI 시도
@@ -281,7 +289,7 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
                         contents=prompt,
                         config=types.GenerateContentConfig(
                             system_instruction=system_instruction,
-                            temperature=0.5,
+                            temperature=0.3,
                         )
                     )
                     if response and response.text:
@@ -294,7 +302,7 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
         except Exception as e:
             print(f"⚠️ Gemini Client 생성 실패: {e}")
 
-    # 2. Gemini 429 시 Groq AI (Llama 3.3 70B) 고성능 분석 구동
+    # 2. Gemini 429 시 Groq AI (Llama 3.3 70B) 고성능 가드레일 분석 구동
     groq_result = call_groq_ai(prompt, system_instruction)
     if groq_result:
         return groq_result
@@ -306,17 +314,19 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
 
 def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors):
     """최후의 백업 분석 엔진"""
-    kospi_info = krx_data.get("KOSPI", "6,258.77 (37.61 -0.60%)")
-    kosdaq_info = krx_data.get("KOSDAQ", "798.81 (2.86 -0.36%)")
+    kospi_info = krx_data.get("KOSPI", "6,258.77 (-0.60%)")
+    kosdaq_info = krx_data.get("KOSDAQ", "798.81 (-0.36%)")
     supply_info = krx_data.get("KOSPI_투자자동향", "외인 순매도 전환, 기관 파생 헤지물량 출하")
 
-    sp500 = global_data.get("S&P 500", "7757.64 (+0.62%)")
-    nasdaq = global_data.get("NASDAQ", "26690.62 (+1.30%)")
+    sp500 = global_data.get("S&P 500", "4,757.64 (+0.62%)")
+    nasdaq = global_data.get("NASDAQ", "26,690.62 (+1.30%)")
+    es = global_data.get("S&P500 선물", "4,765.25 (+0.15%)")
+    nq = global_data.get("나스닥100 선물", "26,720.50 (+0.22%)")
     us10y = global_data.get("미 10년물 국채금리", "4.66% (-0.21%)")
-    usdkrw = global_data.get("원/달러 환율", "1407.45원 (-0.96%)")
+    usdkrw = global_data.get("원/달러 환율", "1,407.45원 (-0.96%)")
     wti = global_data.get("WTI 유가", "78.18달러 (+1.15%)")
-    gold = global_data.get("금 선물", "4340.7달러 (+2.33%)")
-    btc = global_data.get("비트코인", "64956.3달러 (+0.12%)")
+    gold = global_data.get("금 선물", "4,340.7달러 (+2.33%)")
+    btc = global_data.get("비트코인", "64,956.3달러 (+0.12%)")
 
     clean_news = [n for n in naver_news if not re.search(r"[a-zA-Z]{6,}", n)]
     n1 = clean_news[0] if len(clean_news) > 0 else "미 연준 긴축 기조 장기화 우려 및 국채 금리 할인율 상방 압력"
@@ -339,7 +349,7 @@ def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, t
     - **KOSPI**: {kospi_info}  |  **KOSDAQ**: {kosdaq_info}
     - **시장 수급 메커니즘**: {supply_info}
 - **글로벌 벤치마크 지표**: 🏛️
-    - **S&P 500**: {sp500}  |  **NASDAQ**: {nasdaq}
+    - **S&P 500**: {sp500}  |  **NASDAQ**: {nasdaq}  |  **야간선물**: S&P500 {es} / NQ {nq}
     - **미 10년물 국채금리**: {us10y}  |  **원/달러 환율**: {usdkrw}
     - **WTI 유가**: {wti}  |  **금 선물**: {gold}  |  **비트코인**: {btc}
 
@@ -349,11 +359,11 @@ def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, t
 
 - **이슈 1 [3성급★★★]: 통화정책 할인율 압력과 기술주 밸류에이션 리프라이싱** ⚠️
   • **분석 내용**: {n1}
-  • **블룸버그 특파원 시각**: 미 국채금리가 {us10y} 선에서 횡보함에 따라 할인율 상승에 취약한 고평가 기술주 전반의 MULTIPLE 조정이 지속되고 있습니다. 국채 금리 향방이 향후 위험자산 전반의 할인율 결정 핵심 분수령입니다.
+  • **블룸버그 특파원 시각**: 미 국채금리가 {us10y} 선에서 횡보함에 따라 할인율 상승에 취약한 고평가 기술주 전반의 Multiple 조정이 진행 중입니다.
 
-- **이슈 2 [3성급★★★]: 외인 수급 이탈 및 환율 위험 프리미엄 점검** 📊
+- **이슈 2 [3성급★★★]: 환율 하락과 외국인 자금 이탈 영향 점검** 📊
   • **분석 내용**: {n3}
-  • **골드만삭스 전략가 시각**: 원/달러 환율이 {usdkrw} 수준에서 긴장감을 유지함에 따라, 외국인 메이저 자금은 현물 상방 배팅을 자제하고 파생 선물시장을 통한 포트폴리오 하방 델타 헤지에 집약하고 있습니다.
+  • **골드만삭스 전략가 시각**: 원/달러 환율이 {usdkrw} 수준으로 원화 강세가 진행됨에 따라 수출 기업의 환차손 부담이 가중되는 반면, 원자재 수입 기업의 원가 부담은 개선되는 차별화 장세가 연출되고 있습니다.
 
 ---
 
@@ -361,24 +371,24 @@ def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, t
 
 - **이슈 3 [3성급★★★]: 실적 모멘텀 및 원자재 수혜주 중심의 차별화 쏠림** 💰
   • **주도 강세 섹터**: {sectors_formatted}
-  • **수급 모멘텀**: {n2} 지수의 추가 하락 압력 속에서도 원가 전가력이 확보된 원자재/화학 및 실적 가시성이 입증된 헬스케어·전자 섹터로 스마트머니의 집중 매수세가 포착되었습니다.
+  • **수급 모멘텀**: {n2} 지수의 추가 하락 압력 속에서도 원가 전가력이 확보된 화학/원자재 섹터로 스마트머니의 집중 매수세가 포착되었습니다.
 
 - **거래대금 집중 핵심 종목 및 수급 특징**: 🧨
 {stocks_formatted}
-  • **세력 매매 의도 분석**: 'KODEX 200선물인버스2X' 등 지수 하방 상품으로의 거래대금 대거 쏠림은 기관 및 세력들이 추가 변동성에 대비해 강력한 **하방 리스크 차단막(Risk Buffer)**을 구축하고 있음을 명확히 증명합니다.
+  • **세력 매매 의도 분석**: 'KODEX 200선물인버스2X' 등 지수 하방 상품으로의 거래대금 쏠림은 기관 및 세력들이 추가 변동성에 대비해 강력한 **하방 리스크 차단막(Risk Buffer)**을 구축하고 있음을 증명합니다.
 
 ---
 
 ### 4. 🎯 [3성급★★★] 원자재, 환율 & 자산시장 시사점 (Alternative Risk)
-- **금 선물 ({gold}) 폭등**: 지정학적 불안과 통화 가치 하락에 대비한 실물 안전자산으로의 자금 대피 심리가 정점에 달했음을 나타냅니다.
+- **금 선물 ({gold}) 폭등**: 지정학적 불안과 통화 가치 하락에 대비한 실물 안전자산으로의 자금 대피 심리가 정점에 달했습니다.
 - **WTI 유가 ({wti}) 추이**: 인플레이션 재점화 가능성을 지속 자극하며 중앙은행의 긴축 기조 완화 걸림돌로 작용 중입니다.
 
 ---
 
 ### 5. 🚀 [Goldman Sachs Strategist] 내일의 전술적 자산 배분 대응 전략
 - **방어적 포트폴리오 재편 (Portfolio Risk Management)**:
-  1. **리스크 헤지 유지**: 파생 인버스 쏠림이 완화되기 전까지 무리한 추격 매수를 금지하고 현금 비중 30% 이상을 확보하십시오.
-  2. **실적 퀄리티주 압축**: 유가/원자재 상승 수혜 섹터 및 펀더멘털이 확실한 개별 모멘텀주 위주의 방어적 분할 접근이 유효합니다."""
+  1. **현금 비중 35% 확보**: 파생 인버스 쏠림이 완화되기 전까지 무리한 추격 매수를 금지하고 현금 비중 35% 이상을 엄격히 확보하십시오.
+  2. **실적 퀄리티주 분할 접근**: 유가/원자재 상승 수혜 섹터 및 펀더멘털이 확실한 반도체/AI 벨류체인 위주의 분할 매수 전략이 유효합니다."""
 
 
 def generate_unified_report(krx_data, global_data, naver_news, top_stocks, top_sectors):
@@ -387,8 +397,8 @@ def generate_unified_report(krx_data, global_data, naver_news, top_stocks, top_s
     아래 실시간 수집 데이터를 바탕으로, 각 지표와 사건 간의 월가급 금융 메커니즘을 정밀 추론하여 가독성이 뛰어난 전문 리포트를 작성하라.
 
     [수집된 실시간 시장 데이터]
-    - 국내 증시 현황 및 수급: {krx_data}
-    - 해외 주요 매크로 지표: {global_data}
+    - 국내 증시 현황 및 수급 금액: {krx_data}
+    - 해외 주요 매크로 지표 및 야간선물: {global_data}
     - 헤드라인 핵심 뉴스: {naver_news}
     - 거래대금 상위 종목: {top_stocks}
     - 주도 강세 섹터: {top_sectors}
@@ -491,7 +501,7 @@ if __name__ == "__main__":
     global_macro = fetch_global_yahoo_data()
     naver_news, top_stocks, top_sectors = fetch_market_intelligence()
 
-    print("🤖 [STOCK BOT] 이중화 AI 리포트 생성 중...")
+    print("🤖 [STOCK BOT] 월가 최고급 이중화 AI 리포트 생성 중...")
     unified_report = generate_unified_report(krx_data, global_macro, naver_news, top_stocks, top_sectors)
 
     print("📲 메신저 송출 시작...")
