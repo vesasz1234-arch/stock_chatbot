@@ -49,7 +49,6 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY")
 KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN")
 
-# 하드코딩 백업 디스코드 웹훅 주소
 DISCORD_WEBHOOK_URL = (
     os.environ.get("DISCORD_WEBHOOK_URL")
     or "https://discordapp.com/api/webhooks/1534114852082155574/ggvSBAoyDs1JbPwW7V8hEWTRVX-5MCTzduMiqv0mxKEp5hLoZOsZ1TXDRzo8-cNdE6bW"
@@ -73,7 +72,7 @@ def fetch_krx_market_summary():
     krx_data = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # 1. KOSPI 수집 (URL 파라미터 수정: KOSPI)
+    # 1. KOSPI 수집
     try:
         res = requests.get("https://finance.naver.com/sise/sise_index.naver?code=KOSPI", headers=headers, timeout=5)
         if res.status_code == 200:
@@ -86,7 +85,7 @@ def fetch_krx_market_summary():
     except Exception as e:
         print(f"⚠️ KOSPI 수집 에러: {e}")
 
-    # 2. KOSDAQ 수집 (URL 파라미터 수정: KOSDAQ)
+    # 2. KOSDAQ 수집
     try:
         res = requests.get("https://finance.naver.com/sise/sise_index.naver?code=KOSDAQ", headers=headers, timeout=5)
         if res.status_code == 200:
@@ -215,30 +214,27 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
         f"반드시 3성급(⭐⭐⭐) 핵심 이슈, 3성급(⭐⭐⭐) 주요 기업 실적/모멘텀, 3성급(⭐⭐⭐) 경제지표 분석을 명확히 구분하여 월가 최고 수준의 한국어로 작성하라."
     )
 
+    # API 호출 가능한 표준 모델 스트링 명시
     target_models = [
         "gemini-2.0-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-pro-latest"
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
     ]
 
     for m_name in target_models:
-        for attempt in range(2):
-            try:
-                model = genai.GenerativeModel(model_name=m_name, system_instruction=system_instruction)
-                res = model.generate_content(prompt)
-                if res and res.text:
-                    cleaned = sanitize_report_text(res.text)
-                    if len(cleaned) > 300 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
-                        print(f"✅ AI 모델 ({m_name}) 리포트 생성 성공!")
-                        return cleaned
-            except Exception as e:
-                err_msg = str(e)
-                print(f"⚠️ 모델 {m_name} 호출 에러 (시도 {attempt+1}): {err_msg}")
-                if "429" in err_msg:
-                    print("⏳ API 분당 쿼터 초과 - 10초 대기 후 재시도합니다...")
-                    time.sleep(10)
-                else:
-                    break
+        try:
+            model = genai.GenerativeModel(model_name=m_name, system_instruction=system_instruction)
+            res = model.generate_content(prompt)
+            if res and res.text:
+                cleaned = sanitize_report_text(res.text)
+                if len(cleaned) > 300 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
+                    print(f"✅ AI 모델 ({m_name}) 리포트 생성 성공!")
+                    return cleaned
+        except Exception as e:
+            err_msg = str(e)
+            print(f"⚠️ 모델 {m_name} 호출 에러: {err_msg}")
+            # 429 또는 404 발생 시 즉시 대기 없이 다음 백업 모델로 넘어가 속도 확보
+            continue
 
     print("🚨 모든 AI 모델 호출 불가 - 동적 프리미엄 리포트 백업 엔진 가동")
     return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
@@ -281,7 +277,7 @@ def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, t
 
 ---
 
-### 2. 📰 ⭐3성급(⭐⭐⭐) 글로벌 & 국내 핵심 이슈 분석
+### 2. 📰 3성급(⭐⭐⭐) 글로벌 & 국내 핵심 이슈 분석
 
 - **이슈 1 (중요도 ⭐⭐⭐): 통화정책 & 매크로 환경 재편** ⚠️
   • {n1}
@@ -291,7 +287,7 @@ def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, t
 
 ---
 
-### 3. 🏢 ⭐3성급(⭐⭐⭐) 핵심 기업 실적 & 시장 주도 섹터
+### 3. 🏢 3성급(⭐⭐⭐) 핵심 기업 실적 & 시장 주도 섹터
 
 - **이슈 3 (중요도 ⭐⭐⭐): 실적 가시성 보유 주도 업종 쏠림** 💰
   • 주도 강세 섹터: {sectors_str}
@@ -302,7 +298,7 @@ def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, t
 
 ---
 
-### 4. 🎯 ⭐3성급(⭐⭐⭐) 원자재, 환율 & 자산시장 시사점
+### 4. 🎯 3성급(⭐⭐⭐) 원자재, 환율 & 자산시장 시사점
 - **환율 & 금리**: 원/달러 환율과 국채 금리 추이가 가치 평가(Valuation) 부담을 완화시키고 있습니다.
 - **원자재 & 대체 자산**: 유가 및 금 선물 흐름을 적극 모니터링해야 합니다."""
 
