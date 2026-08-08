@@ -29,7 +29,6 @@ args = parse_arguments()
 KST = timezone(timedelta(hours=9))
 now_kst = datetime.now(KST)
 
-# CLI 인자가 있으면 우선 적용, 없으면 실행 시각 기준 판단
 if args.mode:
     is_morning = (args.mode == "morning")
 else:
@@ -42,14 +41,19 @@ mode_title = (
 )
 
 # =========================================================
-# 🔑 환경 변수 및 토큰 설정 (보안 강화)
+# 🔑 환경 변수 및 토큰 설정
 # =========================================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY")
 KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN")
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+
+# 하드코딩 백업 디스코드 웹훅 주소
+DISCORD_WEBHOOK_URL = (
+    os.environ.get("DISCORD_WEBHOOK_URL")
+    or "https://discordapp.com/api/webhooks/1534114852082155574/ggvSBAoyDs1JbPwW7V8hEWTRVX-5MCTzduMiqv0mxKEp5hLoZOsZ1TXDRzo8-cNdE6bW"
+)
 
 if os.path.exists("kakao_token.json"):
     try:
@@ -69,9 +73,9 @@ def fetch_krx_market_summary():
     krx_data = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # KOSPI 수집
+    # 1. KOSPI 수집 (URL 파라미터 수정: KOSPI)
     try:
-        res = requests.get("https://finance.naver.com/sise/sise_index.naver?code=KOSI", headers=headers, timeout=5)
+        res = requests.get("https://finance.naver.com/sise/sise_index.naver?code=KOSPI", headers=headers, timeout=5)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, "html.parser")
             now_val = soup.select_one("#now_value")
@@ -82,9 +86,9 @@ def fetch_krx_market_summary():
     except Exception as e:
         print(f"⚠️ KOSPI 수집 에러: {e}")
 
-    # KOSDAQ 수집 (독립 블록으로 분리)
+    # 2. KOSDAQ 수집 (URL 파라미터 수정: KOSDAQ)
     try:
-        res = requests.get("https://finance.naver.com/sise/sise_index.naver?code=KOSQ", headers=headers, timeout=5)
+        res = requests.get("https://finance.naver.com/sise/sise_index.naver?code=KOSDAQ", headers=headers, timeout=5)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, "html.parser")
             now_val = soup.select_one("#now_value")
@@ -95,7 +99,7 @@ def fetch_krx_market_summary():
     except Exception as e:
         print(f"⚠️ KOSDAQ 수집 에러: {e}")
 
-    # 투자자 동향 수집
+    # 3. 투자자 동향 수집
     try:
         res_sise = requests.get("https://finance.naver.com/sise/", headers=headers, timeout=5)
         if res_sise.status_code == 200:
@@ -211,27 +215,32 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
         f"반드시 3성급(⭐⭐⭐) 핵심 이슈, 3성급(⭐⭐⭐) 주요 기업 실적/모멘텀, 3성급(⭐⭐⭐) 경제지표 분석을 명확히 구분하여 월가 최고 수준의 한국어로 작성하라."
     )
 
-    # Correct Gemini model strings
     target_models = [
         "gemini-2.0-flash",
-        "gemini-1.5-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-pro-latest"
     ]
 
     for m_name in target_models:
-        try:
-            model = genai.GenerativeModel(model_name=m_name, system_instruction=system_instruction)
-            res = model.generate_content(prompt)
-            if res and res.text:
-                cleaned = sanitize_report_text(res.text)
-                if len(cleaned) > 300 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
-                    print(f"✅ AI 모델 ({m_name}) 리포트 생성 성공!")
-                    return cleaned
-        except Exception as e:
-            print(f"⚠️ 모델 {m_name} 호출 실패: {e}")
-            time.sleep(1)
-            continue
+        for attempt in range(2):
+            try:
+                model = genai.GenerativeModel(model_name=m_name, system_instruction=system_instruction)
+                res = model.generate_content(prompt)
+                if res and res.text:
+                    cleaned = sanitize_report_text(res.text)
+                    if len(cleaned) > 300 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
+                        print(f"✅ AI 모델 ({m_name}) 리포트 생성 성공!")
+                        return cleaned
+            except Exception as e:
+                err_msg = str(e)
+                print(f"⚠️ 모델 {m_name} 호출 에러 (시도 {attempt+1}): {err_msg}")
+                if "429" in err_msg:
+                    print("⏳ API 분당 쿼터 초과 - 10초 대기 후 재시도합니다...")
+                    time.sleep(10)
+                else:
+                    break
 
-    print("🚨 AI 모델 호출 불가 - 동적 프리미엄 리포트 백업 엔진 가동")
+    print("🚨 모든 AI 모델 호출 불가 - 동적 프리미엄 리포트 백업 엔진 가동")
     return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
 
 
@@ -375,6 +384,8 @@ def send_discord_message(text_content):
             res = requests.post(DISCORD_WEBHOOK_URL, data=json.dumps(payload), headers=headers, timeout=10)
             if res.status_code in [200, 204]:
                 print(f"✅ [디스코드] 파트 {idx+1} 전송 완료!")
+            else:
+                print(f"⚠️ 디스코드 전송 실패 (상태 코드: {res.status_code}): {res.text}")
         except Exception as e:
             print(f"⚠️ 디스코드 전송 에러: {e}")
         time.sleep(1)
