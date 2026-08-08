@@ -197,13 +197,13 @@ def fetch_market_intelligence():
 
 
 def call_groq_ai(prompt, system_instruction):
-    """보조 AI 엔진: Groq API (Llama 3.3 70B) 호출"""
+    """보조 AI 엔진: Groq API (Llama 3.3 70B) 고성능 분석 가동"""
     if not GROQ_API_KEY:
         print("⚠️ GROQ_API_KEY 미설정 - Groq 엔진을 스킵합니다.")
         return None
 
     key_preview = f"{GROQ_API_KEY[:8]}...{GROQ_API_KEY[-4:]}" if len(GROQ_API_KEY) > 12 else "INVALID_KEY"
-    print(f"🚀 [Groq AI Engine] Llama-3.3-70B 가동 중... (Key: {key_preview})")
+    print(f"🚀 [Groq AI Engine] Llama-3.3-70B 월가 고급 프롬프트 가동 중... (Key: {key_preview})")
 
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
@@ -216,18 +216,18 @@ def call_groq_ai(prompt, system_instruction):
             {"role": "system", "content": system_instruction},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.6,
-        "max_tokens": 2500
+        "temperature": 0.5,
+        "max_tokens": 3000
     }
 
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=25)
+        res = requests.post(url, headers=headers, json=payload, timeout=30)
         if res.status_code == 200:
             data = res.json()
             text = data["choices"][0]["message"]["content"]
             cleaned = sanitize_report_text(text)
-            if len(cleaned) > 400:
-                print("✅ [SUCCESS] Groq Llama-3.3-70B AI 프리미엄 리포트 생성 완료!")
+            if len(cleaned) > 500:
+                print("✅ [SUCCESS] Groq Llama-3.3-70B 월가급 프리미엄 리포트 생성 완료!")
                 return cleaned
         else:
             print(f"⚠️ Groq API 오류 ({res.status_code}): {res.text[:150]}")
@@ -238,17 +238,35 @@ def call_groq_ai(prompt, system_instruction):
 
 def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top_sectors):
     system_instruction = (
-        f"너는 월스트리트 헤드쿼터의 수석 마켓 전략가이자 블룸버그 특파원인 [STOCK BOT]이다.\n"
-        f"단순 시세 수치나 뉴스 제목 나열은 가치가 없는 쓰레기 브리핑이다. 거시경제 매크로 파급 경로, 미 국채금리와 기술주 밸류에이션 할인율(Multiple), 외인/기관의 파생시장 하방 델타 헤지 성격 등 월가 최고 수준의 통찰력과 인과관계를 정교하게 분석하라.\n"
-        f"답변은 반드시 '📈 **[STOCK BOT] 블룸버그 프리미엄 {'장전 모닝' if is_morning else '마감 시황'} 브리핑**'으로 시작하라.\n"
-        f"제공된 [실제 수집 데이터]의 수치를 절대 왜곡하거나 지어내지 마라(할루시네이션 금지).\n"
-        f"중요도 표기 시 반드시 [3성급★★★] 형태로 정갈하게 출력하여 문자가 깨지지 않게 하라.\n"
-        f"다음 5개 파트를 월가 최고 투자 저널 어조로 작성하라:\n"
-        f"1. 🌐 글로벌 매크로 & 국내 증시 스코어카드 (Macro Dashboard)\n"
-        f"2. 📰 [3성급★★★] 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)\n"
-        f"3. 🏢 [3성급★★★] 핵심 기업 실적 & 주도 섹터 (Capital Flow Analysis)\n"
-        f"4. 🎯 [3성급★★★] 원자재, 환율 & 자산시장 시사점 (Alternative Risk)\n"
-        f"5. 🚀 [Goldman Sachs Strategist] 내일의 전술적 자산 배분 대응 전략"
+        "너는 골드만삭스, 블룸버그 수석 마켓 전략가이자 헤지펀드 최고투자책임자(CIO)인 [STOCK BOT]이다.\n"
+        "초보자용 요약이나 단순 사실 나열은 절대 금지한다. 기관 수급, 할인율(Multiple), 파생시장 델타 헤징, 금리 커브 및 원자재 인과관계를 월가 최상위 인스티튜셔널 저널 수준으로 정밀 분석하라.\n\n"
+        "[출력 규격 및 가독성 필수 지침]\n"
+        "1. 반드시 아래 5개 구분선(`---`)과 헤더 구조(`###`)를 정확히 유지하라. 문단을 한 글로 뭉개지 말고 불렛포인트(`•`)와 줄바꿈을 적극 활용하라.\n"
+        "2. 중요 지표와 숫자는 반드시 **강조(Bold)** 처리하라.\n"
+        "3. '그린뉴딜', '상승해서 상승했다' 같은 구식/초보자용 표현은 절대 사용하지 마라.\n\n"
+        "작성 서식 예시:\n"
+        "📈 **[STOCK BOT] 블룸버그 프리미엄 마감 시황 브리핑**\n\n"
+        "---\n\n"
+        "### 1. 🌐 글로벌 매크로 & 국내 증시 스코어카드 (Macro Dashboard)\n"
+        "• **국내 증시**: KOSPI **[치]** | KOSDAQ **[치]**\n"
+        "• **수급 메커니즘**: [외인/기관 동향 분석]\n"
+        "• **글로벌 지표**: S&P500 **[치]**, NASDAQ **[치]**, 미 10년물 금리 **[치]**, 환율 **[치]**\n\n"
+        "---\n\n"
+        "### 2. 📰 [3성급★★★] 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)\n"
+        "• **이슈 1**: [헤드라인 분석]\n"
+        "  - **메커니즘 분석**: [금리와 기술주 밸류에이션 인과관계 분석]\n"
+        "• **이슈 2**: [수급 분석]\n"
+        "  - **월가 시각**: [환율 및 외국인 선물/옵션 파생 헤지 동향 분석]\n\n"
+        "---\n\n"
+        "### 3. 🏢 [3성급★★★] 핵심 기업 실적 & 주도 섹터 (Capital Flow Analysis)\n"
+        "• **주도 강세 섹터**: [섹터명 및 수급 원인]\n"
+        "• **거래대금 집중 종목**: [종목 분석 및 인버스/레버리지 수급 의도 추론]\n\n"
+        "---\n\n"
+        "### 4. 🎯 [3성급★★★] 원자재, 환율 & 자산시장 시사점 (Alternative Risk)\n"
+        "• **금/유가 시사점**: [지정학적 리스크 및 인플레이션 원가 전가력 분석]\n\n"
+        "---\n\n"
+        "### 5. 🚀 [Goldman Sachs Strategist] 내일의 전술적 자산 배분 대응 전략\n"
+        "• **포트폴리오 리스크 관리**: [현금 비중 및 전략적 세부 액션 플랜 제시]"
     )
 
     # 1. Gemini AI 시도
@@ -263,12 +281,12 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
                         contents=prompt,
                         config=types.GenerateContentConfig(
                             system_instruction=system_instruction,
-                            temperature=0.6,
+                            temperature=0.5,
                         )
                     )
                     if response and response.text:
                         cleaned = sanitize_report_text(response.text)
-                        if len(cleaned) > 400 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
+                        if len(cleaned) > 500 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
                             print(f"✅ [SUCCESS] 구글 Gemini AI ({m_name}) 리포트 생성 완료!")
                             return cleaned
                 except Exception as e:
@@ -276,13 +294,13 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
         except Exception as e:
             print(f"⚠️ Gemini Client 생성 실패: {e}")
 
-    # 2. Gemini 쿼터 초과 시 Groq AI (Llama 3.3 70B) 우회 가동
+    # 2. Gemini 429 시 Groq AI (Llama 3.3 70B) 고성능 분석 구동
     groq_result = call_groq_ai(prompt, system_instruction)
     if groq_result:
         return groq_result
 
     # 3. 최후의 비상 템플릿
-    print("🚨 모든 AI 모델 호출 불가 - 백업 템플릿 가동")
+    print("🚨 모든 AI 모델 호출 불가 - 비상 템플릿 가동")
     return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
 
 
@@ -366,14 +384,14 @@ def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, t
 def generate_unified_report(krx_data, global_data, naver_news, top_stocks, top_sectors):
     prompt = f"""
     [현재 모드]: {mode_title}
-    아래 수집된 실제 데이터 기반으로 골드만삭스 수석 마켓 전략가 및 블룸버그 특파원의 시각에서 깊이 있는 전문 리포트를 작성하라.
+    아래 실시간 수집 데이터를 바탕으로, 각 지표와 사건 간의 월가급 금융 메커니즘을 정밀 추론하여 가독성이 뛰어난 전문 리포트를 작성하라.
 
-    [실제 수집 데이터]
-    - 국내 증시 지수 및 수급: {krx_data}
-    - 해외 매크로 지표: {global_data}
-    - 헤드라인 뉴스: {naver_news}
-    - 거래대금 상위 핵심 종목: {top_stocks}
-    - 주도 섹터: {top_sectors}
+    [수집된 실시간 시장 데이터]
+    - 국내 증시 현황 및 수급: {krx_data}
+    - 해외 주요 매크로 지표: {global_data}
+    - 헤드라인 핵심 뉴스: {naver_news}
+    - 거래대금 상위 종목: {top_stocks}
+    - 주도 강세 섹터: {top_sectors}
     """
     return call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top_sectors)
 
