@@ -66,7 +66,7 @@ if os.path.exists("kakao_token.json"):
 
 
 def fetch_krx_market_summary():
-    """국내 증시 핵심 지수(KOSPI, KOSDAQ) 및 수급 독립 정밀 수집"""
+    """국내 증시 핵심 지수(KOSPI, KOSDAQ) 및 수급 독립 수집"""
     krx_data = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
@@ -116,7 +116,7 @@ def fetch_krx_market_summary():
 
 
 def fetch_global_yahoo_data():
-    """글로벌 매크로 지표, 원자재, 환율 정밀 수집"""
+    """글로벌 매크로 지표 정밀 수집"""
     tickers = {
         "S&P 500": "^GSPC",
         "NASDAQ": "^IXIC",
@@ -145,7 +145,7 @@ def fetch_global_yahoo_data():
 
 
 def fetch_market_intelligence():
-    """네이버 증시 주요 뉴스, 거래대금 상위 특징주, 주도 업종 수집"""
+    """뉴스, 특징주, 주도 섹터 수집"""
     naver_news, top_stocks, top_sectors = [], [], []
     headers = {"User-Agent": "Mozilla/5.0"}
 
@@ -200,20 +200,20 @@ def fetch_market_intelligence():
 
 def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top_sectors):
     if not GEMINI_API_KEY:
-        print("⚠️ GEMINI_API_KEY 없음 - 최고급 월가 백업 엔진을 가동합니다.")
+        print("⚠️ GEMINI_API_KEY 없음 - 백업 엔진을 가동합니다.")
         return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
 
     system_instruction = (
-        f"너는 블룸버그(Bloomberg) 수석 특파원이자 골드만삭스 수석 글로벌 마켓 전략가인 [STOCK BOT]이다.\n"
-        f"단순히 시세 수치나 뉴스 제목을 복사/나열하는 1차원적 리포트는 쓰레기다. 통찰력 있는 거시경제 파급 경로, 밸류에이션 할인율, 기관 수급의 헤지 목적을 날카롭게 분석하라.\n"
+        f"너는 월스트리트 헤드쿼터의 수석 마켓 전략가이자 블룸버그 특파원인 [STOCK BOT]이다.\n"
+        f"단순 시세 수치나 뉴스 제목 나열은 가치가 없는 쓰레기 브리핑이다. 거시경제 매크로 파급 경로, 미 국채금리와 기술주 밸류에이션 할인율(Multiple), 외인/기관의 파생시장 하방 델타 헤지 성격 등 월가 최고 수준의 통찰력과 인과관계를 정교하게 분석하라.\n"
         f"답변은 반드시 '📈 **[STOCK BOT] 블룸버그 프리미엄 {'장전 모닝' if is_morning else '마감 시황'} 브리핑**'으로 시작하라.\n"
-        f"제공된 [실제 수집 데이터]의 수치를 절대로 지어내거나 왜곡하지 마라(할루시네이션 절대 금지).\n"
-        f"소제목 및 섹션 표기 시 '3성급(⭐⭐⭐)'에서 별표 '⭐⭐⭐' 문자를 절대 누락하지 말고 정확히 '3성급(⭐⭐⭐)'으로 출력하라.\n"
-        f"다음 5개 핵심 파트를 격조 높은 월가 투자 저널 어조로 작성하라:\n"
-        f"1. 🌐 글로벌 매크로 & 국내 증시 스코어카드\n"
-        f"2. 📰 3성급(⭐⭐⭐) 글로벌 & 국내 핵심 이슈 분석 (매크로 파급 경로 심층 분석)\n"
-        f"3. 🏢 3성급(⭐⭐⭐) 핵심 기업 실적 & 주도 섹터 (수급 주도 원인 및 세력 의도 분석)\n"
-        f"4. 🎯 3성급(⭐⭐⭐) 원자재, 환율 & 자산시장 시사점 (안전자산/헤지 자산 수급 전망)\n"
+        f"제공된 [실제 수집 데이터]의 수치를 절대 왜곡하거나 지어내지 마라(할루시네이션 금지).\n"
+        f"중요도 표기 시 반드시 [3성급★★★] 형태로 정갈하게 출력하여 문자가 깨지지 않게 하라.\n"
+        f"다음 5개 파트를 월가 최고 투자 저널 어조로 작성하라:\n"
+        f"1. 🌐 글로벌 매크로 & 국내 증시 스코어카드 (Macro Dashboard)\n"
+        f"2. 📰 [3성급★★★] 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)\n"
+        f"3. 🏢 [3성급★★★] 핵심 기업 실적 & 주도 섹터 (Capital Flow Analysis)\n"
+        f"4. 🎯 [3성급★★★] 원자재, 환율 & 자산시장 시사점 (Alternative Risk)\n"
         f"5. 🚀 [Goldman Sachs Strategist] 내일의 전술적 자산 배분 대응 전략"
     )
 
@@ -226,37 +226,39 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
     target_models = [
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
-        "gemini-1.5-flash",
     ]
 
     for m_name in target_models:
-        try:
-            response = client.models.generate_content(
-                model=m_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.6,
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=m_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.6,
+                    )
                 )
-            )
-            if response and response.text:
-                cleaned = sanitize_report_text(response.text)
-                if len(cleaned) > 400 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
-                    print(f"✅ 월가 AI 모델 ({m_name}) 프리미엄 리포트 생성 성공!")
-                    return cleaned
-        except Exception as e:
-            err_msg = str(e)
-            print(f"⚠️ 모델 {m_name} 호출 에러: {err_msg}")
-            if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                print(f"⏳ {m_name} 쿼터 초과 - 다음 백업 모델로 즉시 전환합니다.")
-            continue
+                if response and response.text:
+                    cleaned = sanitize_report_text(response.text)
+                    if len(cleaned) > 400 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
+                        print(f"✅ [SUCCESS] 월가 AI 모델 ({m_name}) 프리미엄 리포트 생성 완료!")
+                        return cleaned
+            except Exception as e:
+                err_msg = str(e)
+                print(f"⚠️ 모델 {m_name} 호출 에러 (시도 {attempt+1}): {err_msg}")
+                if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                    print(f"⏳ {m_name} 쿼터 제한 - 10초 대기 후 재시도...")
+                    time.sleep(10)
+                else:
+                    break
 
-    print("🚨 모든 AI 모델 쿼터 초과 - 100% 동적 월가 저널급 백업 엔진 가동")
+    print("🚨 모든 AI 모델 호출 불가 - 백업 엔진 가동")
     return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
 
 
 def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors):
-    """골드만삭스/블룸버그 특파원급 100% 동적 프리미엄 백업 분석 엔진"""
+    """골드만삭스/블룸버그 특파원급 백업 분석 엔진 (서식 완벽 보정)"""
     kospi_info = krx_data.get("KOSPI", "6,258.77 (37.61 -0.60%)")
     kosdaq_info = krx_data.get("KOSDAQ", "798.81 (2.86 -0.36%)")
     supply_info = krx_data.get("KOSPI_투자자동향", "외인 순매도 전환, 기관 파생 헤지물량 출하")
@@ -296,21 +298,21 @@ def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, t
 
 ---
 
-### 2. 📰 3성급(⭐⭐⭐) 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)
+### 2. 📰 [3성급★★★] 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)
 
-- **이슈 1 (중요도 ⭐⭐⭐): 통화정책 할인율 압력과 기술주 밸류에이션 리프라이싱** ⚠️
+- **이슈 1 [3성급★★★]: 통화정책 할인율 압력과 기술주 밸류에이션 리프라이싱** ⚠️
   • **분석 내용**: {n1}
   • **블룸버그 특파원 시각**: 미 국채금리가 {us10y} 선에서 횡보함에 따라 할인율 상승에 취약한 고평가 기술주 전반의 MULTIPLE 조정이 지속되고 있습니다. 국채 금리 향방이 향후 위험자산 전반의 할인율 결정 핵심 분수령입니다.
 
-- **이슈 2 (중요도 ⭐⭐⭐): 외인 수급 이탈 및 환율 위험 프리미엄 점검** 📊
+- **이슈 2 [3성급★★★]: 외인 수급 이탈 및 환율 위험 프리미엄 점검** 📊
   • **분석 내용**: {n3}
   • **골드만삭스 전략가 시각**: 원/달러 환율이 {usdkrw} 수준에서 긴장감을 유지함에 따라, 외국인 메이저 자금은 현물 상방 배팅을 자제하고 파생 선물시장을 통한 포트폴리오 하방 델타 헤지에 집약하고 있습니다.
 
 ---
 
-### 3. 🏢 3성급(⭐⭐⭐) 핵심 기업 실적 & 시장 주도 섹터 (Flow of Capital)
+### 3. 🏢 [3성급★★★] 핵심 기업 실적 & 시장 주도 섹터 (Capital Flow Analysis)
 
-- **이슈 3 (중요도 ⭐⭐⭐): 실적 모멘텀 및 원자재 수혜주 중심의 차별화 쏠림** 💰
+- **이슈 3 [3성급★★★]: 실적 모멘텀 및 원자재 수혜주 중심의 차별화 쏠림** 💰
   • **주도 강세 섹터**: {sectors_formatted}
   • **수급 모멘텀**: {n2} 지수의 추가 하락 압력 속에서도 원가 전가력이 확보된 원자재/화학 및 실적 가시성이 입증된 헬스케어·전자 섹터로 스마트머니의 집중 매수세가 포착되었습니다.
 
@@ -320,7 +322,7 @@ def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, t
 
 ---
 
-### 4. 🎯 3성급(⭐⭐⭐) 원자재, 환율 & 자산시장 시사점 (Alternative Assets)
+### 4. 🎯 [3성급★★★] 원자재, 환율 & 자산시장 시사점 (Alternative Risk)
 - **금 선물 ({gold}) 폭등**: 지정학적 불안과 통화 가치 하락에 대비한 실물 안전자산으로의 자금 대피 심리가 정점에 달했음을 나타냅니다.
 - **WTI 유가 ({wti}) 추이**: 인플레이션 재점화 가능성을 지속 자극하며 중앙은행의 긴축 기조 완화 걸림돌로 작용 중입니다.
 
