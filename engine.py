@@ -66,7 +66,7 @@ if os.path.exists("kakao_token.json"):
 
 
 def fetch_krx_market_summary():
-    """국내 증시 핵심 지수(KOSPI, KOSDAQ) 및 수급 독립 수집"""
+    """국내 증시 핵심 지수(KOSPI, KOSDAQ) 및 수급 정밀 수집"""
     krx_data = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
@@ -209,7 +209,7 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
         f"답변은 반드시 '📈 **[STOCK BOT] 블룸버그 프리미엄 {'장전 모닝' if is_morning else '마감 시황'} 브리핑**'으로 시작하라.\n"
         f"제공된 [실제 수집 데이터]의 수치를 절대 왜곡하거나 지어내지 마라(할루시네이션 금지).\n"
         f"중요도 표기 시 반드시 [3성급★★★] 형태로 정갈하게 출력하여 문자가 깨지지 않게 하라.\n"
-        f"다음 5개 파트를 월가 최고 투자 저널 어조로 작성하라:\n"
+        f"다음 5개 파트를 월가 최고 투자 저널 어조로 완성하라:\n"
         f"1. 🌐 글로벌 매크로 & 국내 증시 스코어카드 (Macro Dashboard)\n"
         f"2. 📰 [3성급★★★] 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)\n"
         f"3. 🏢 [3성급★★★] 핵심 기업 실적 & 주도 섹터 (Capital Flow Analysis)\n"
@@ -429,7 +429,7 @@ def send_telegram_message(text_content):
     chunks = [text_content[i : i + 3500] for i in range(0, len(text_content), 3500)]
 
     for chunk in chunks:
-        payload = {"chat_id": chat_id, "text": chunk, "parse_mode": "Markdown"}
+        payload = {"chat_id": chunk, "text": chunk, "parse_mode": "Markdown"}
         res = requests.post(url, data=payload, timeout=10)
         if res.status_code != 200:
             payload.pop("parse_mode", None)
