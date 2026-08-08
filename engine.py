@@ -44,8 +44,10 @@ mode_title = (
 # =========================================================
 # 🔑 환경 변수 및 토큰 설정
 # =========================================================
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY")
@@ -56,22 +58,12 @@ DISCORD_WEBHOOK_URL = (
     or "https://discordapp.com/api/webhooks/1534114852082155574/ggvSBAoyDs1JbPwW7V8hEWTRVX-5MCTzduMiqv0mxKEp5hLoZOsZ1TXDRzo8-cNdE6bW"
 )
 
-if os.path.exists("kakao_token.json"):
-    try:
-        with open("kakao_token.json", "r", encoding="utf-8") as f:
-            k_data = json.load(f)
-            KAKAO_REST_API_KEY = k_data.get("rest_api_key") or KAKAO_REST_API_KEY
-            KAKAO_REFRESH_TOKEN = k_data.get("refresh_token") or KAKAO_REFRESH_TOKEN
-    except Exception as e:
-        print(f"⚠️ kakao_token.json 로드 실패: {e}")
-
 
 def fetch_krx_market_summary():
     """국내 증시 핵심 지수(KOSPI, KOSDAQ) 및 실시간 외인/기관 수급 정밀 수집"""
     krx_data = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # 1. KOSPI 수집
     try:
         res = requests.get("https://finance.naver.com/sise/sise_index.naver?code=KOSPI", headers=headers, timeout=5)
         if res.status_code == 200:
@@ -84,7 +76,6 @@ def fetch_krx_market_summary():
     except Exception as e:
         print(f"⚠️ KOSPI 수집 에러: {e}")
 
-    # 2. KOSDAQ 수집
     try:
         res = requests.get("https://finance.naver.com/sise/sise_index.naver?code=KOSDAQ", headers=headers, timeout=5)
         if res.status_code == 200:
@@ -97,7 +88,6 @@ def fetch_krx_market_summary():
     except Exception as e:
         print(f"⚠️ KOSDAQ 수집 에러: {e}")
 
-    # 3. KOSPI 투자자별 매매동향 (개인/외국인/기관 순매수 수치 정밀 추출)
     try:
         res_sise = requests.get("https://finance.naver.com/sise/", headers=headers, timeout=5)
         if res_sise.status_code == 200:
@@ -106,7 +96,7 @@ def fetch_krx_market_summary():
             if kospi_tab:
                 items = [li.get_text().strip().replace("\n", "").replace("\t", "") for li in kospi_tab.select("li")]
                 if items:
-                    krx_data["KOSPI_투자자동향"] = ", ".join(items)
+                    krx_data["KOSPI_수급"] = ", ".join(items)
     except Exception as e:
         print(f"⚠️ KRX 수급 수집 에러: {e}")
 
@@ -114,12 +104,14 @@ def fetch_krx_market_summary():
 
 
 def fetch_global_yahoo_data():
-    """글로벌 매크로 지표 및 미국 야간 선물 지수 정밀 수집"""
+    """월가 헤지펀드 핵심 매크로 지표 정밀 수집 (VIX, DXY, 야간선물 포함)"""
     tickers = {
         "S&P 500": "^GSPC",
         "NASDAQ": "^IXIC",
         "S&P500 선물": "ES=F",
         "나스닥100 선물": "NQ=F",
+        "VIX 변동성지수": "^VIX",
+        "달러 인덱스": "DX-Y.NYB",
         "미 10년물 국채금리": "^TNX",
         "원/달러 환율": "KRW=X",
         "WTI 유가": "CL=F",
@@ -198,15 +190,64 @@ def fetch_market_intelligence():
     return naver_news, top_stocks, top_sectors
 
 
-def call_groq_ai(prompt, system_instruction):
-    """보조 AI 엔진: Groq API (Llama 3.3 70B) 고성능 금융 가드레일 가동"""
-    if not GROQ_API_KEY:
-        print("⚠️ GROQ_API_KEY 미설정 - Groq 엔진을 스킵합니다.")
+# =========================================================
+# 🤖 1순위 AI: OpenRouter (DeepSeek-R1 / Qwen 2.5 72B)
+# =========================================================
+def call_openrouter_ai(prompt, system_instruction):
+    if not OPENROUTER_API_KEY:
+        print("⚠️ OPENROUTER_API_KEY 없음 - OpenRouter 스킵")
         return None
 
-    key_preview = f"{GROQ_API_KEY[:8]}...{GROQ_API_KEY[-4:]}" if len(GROQ_API_KEY) > 12 else "INVALID_KEY"
-    print(f"🚀 [Groq AI Engine] Llama-3.3-70B 월가 고급 가드레일 가동 중... (Key: {key_preview})")
+    key_preview = f"{OPENROUTER_API_KEY[:8]}...{OPENROUTER_API_KEY[-4:]}" if len(OPENROUTER_API_KEY) > 12 else "INVALID_KEY"
+    print(f"🚀 [OpenRouter AI Engine] 월가 최고급 추론 AI 가동 중... (Key: {key_preview})")
 
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    models = [
+        "deepseek/deepseek-r1:free",
+        "qwen/qwen-2.5-72b-instruct:free",
+        "meta-llama/llama-3.3-70b-instruct:free"
+    ]
+
+    for model_name in models:
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2,
+            "max_tokens": 3000
+        }
+        try:
+            res = requests.post(url, headers=headers, json=payload, timeout=35)
+            if res.status_code == 200:
+                data = res.json()
+                text = data["choices"][0]["message"]["content"]
+                cleaned = sanitize_report_text(text)
+                if len(cleaned) > 500:
+                    print(f"✅ [SUCCESS] OpenRouter ({model_name}) 월가 리포트 생성 완료!")
+                    return cleaned
+            else:
+                print(f"⚠️ OpenRouter {model_name} 오류 ({res.status_code}): {res.text[:120]}")
+        except Exception as e:
+            print(f"⚠️ OpenRouter {model_name} 예외: {e}")
+    return None
+
+
+# =========================================================
+# 🤖 2순위 AI: Groq (Llama-3.3-70B - 언어 가드레일 제어)
+# =========================================================
+def call_groq_ai(prompt, system_instruction):
+    if not GROQ_API_KEY:
+        print("⚠️ GROQ_API_KEY 없음 - Groq 스킵")
+        return None
+
+    print("🚀 [Groq AI Engine] Llama-3.3-70B 언어 가드레일 가동 중...")
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -218,7 +259,7 @@ def call_groq_ai(prompt, system_instruction):
             {"role": "system", "content": system_instruction},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.3,
+        "temperature": 0.2,
         "max_tokens": 3000
     }
 
@@ -229,55 +270,64 @@ def call_groq_ai(prompt, system_instruction):
             text = data["choices"][0]["message"]["content"]
             cleaned = sanitize_report_text(text)
             if len(cleaned) > 500:
-                print("✅ [SUCCESS] Groq Llama-3.3-70B 월가급 프리미엄 리포트 생성 완료!")
+                print("✅ [SUCCESS] Groq Llama-3.3-70B 월가 리포트 생성 완료!")
                 return cleaned
         else:
-            print(f"⚠️ Groq API 오류 ({res.status_code}): {res.text[:150]}")
+            print(f"⚠️ Groq API 오류 ({res.status_code}): {res.text[:120]}")
     except Exception as e:
-        print(f"⚠️ Groq AI 호출 예외: {e}")
+        print(f"⚠️ Groq AI 예외: {e}")
     return None
 
 
 def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top_sectors):
     system_instruction = (
-        f"너는 골드만삭스/블룸버그 수석 마켓 전략가이자 헤지펀드 최고투자책임자(CIO)인 [STOCK BOT]이다.\n"
-        f"너의 목적은 기관 및 고액자산가를 위한 월가 최고 레벨의 정밀 시황 리포트를 작성하는 것이다.\n\n"
-        f"[필수 거시경제 금융 가드레일 - 오류 시 해고]\n"
-        f"1. 원/달러 환율 하락(원화 강세) = 수출 기업 환차손 및 가격경쟁력 부담, 원자재/부품 수입 기업 원가 절감 수혜. 절대로 '환율 하락이 수출 경쟁력을 제고한다'고 쓰지 마라.\n"
-        f"2. 원/달러 환율 상승(원화 약세) = 외국인 환차손 우려로 인한 매도 압력, 수출 기업 단기 매출 환산 착시 수혜.\n"
-        f"3. 미 10년물 국채금리 하락 = 할인율(Multiple) 상방 압력 완화 -> 고PER 기술주/빅테크 밸류에이션 경감.\n"
-        f"4. 미 10년물 국채금리 상승 = 할인율 상승 -> 기술주 멀티플 축소(Multiple Compression) 압박.\n"
-        f"5. 제공된 숫자와 등락률 부호를 엄격히 지켜라(마이너스 비율에 '상승' 표기 금지).\n"
-        f"6. 100% 품격 있는 한국어 금융 저널리즘 어조를 유지하라. 외국어 오타(베트남어, 영어 혼용)나 '그린뉴딜' 같은 구식 표현을 절대 포함하지 마라.\n"
-        f"7. '데이터가 부족하여 알 수 없으나' 같은 피하기성 문장을 절대 쓰지 마라. 주어진 수급 금액과 지수를 바탕으로 세력의 하방 헤지 및 수급 쏠림을 정교히 추론하라.\n"
-        f"8. [5. 전술적 자산 배분] 섹션에서는 '현금 비중 35% 확보', '반도체 벨류체인 분할 매수' 등 명확하고 구체적인 숫자 중심의 포트폴리오 대응책을 제시하라.\n\n"
-        f"[출력 마크다운 양식 규격 - 절대 준수]\n"
-        f"답변은 반드시 아래 구분선(`---`)과 헤더 양식을 완벽히 준수하라:\n\n"
-        f"📈 **[STOCK BOT] 블룸버그 프리미엄 {'장전 모닝' if is_morning else '마감 시황'} 브리핑**\n\n"
-        f"---\n\n"
-        f"### 1. 🌐 글로벌 매크로 & 국내 증시 스코어카드 (Macro Dashboard)\n"
-        f"• **국내 증시 현황**: KOSPI **[치]** | KOSDAQ **[치]**\n"
-        f"• **시장 수급 메커니즘**: [수급 수치 기반 외인/기관 동향 분석]\n"
-        f"• **글로벌 벤치마크 지표**: S&P 500 **[치]**, NASDAQ **[치]**, 야간선물(S&P500 **[치]** / NQ **[치]**), 미 10년물 금리 **[치]**, 원/달러 환율 **[치]**, WTI 유가 **[치]**, 금 선물 **[치]**, 비트코인 **[치]**\n\n"
-        f"---\n\n"
-        f"### 2. 📰 [3성급★★★] 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)\n"
-        f"• **이슈 1: [금리 및 기술주 밸류에이션 인과관계]**\n"
-        f"  - **메커니즘 분석**: [국채금리와 기술주 Multiple 간 정밀 추론]\n"
-        f"• **이슈 2: [환율 및 외국인 수급 변동성]**\n"
-        f"  - **월가 시각**: [환율 변동이 외국인 파생/현물 수급 및 수출 기업 수익성에 미치는 영향]\n\n"
-        f"---\n\n"
-        f"### 3. 🏢 [3성급★★★] 핵심 기업 실적 & 주도 섹터 (Capital Flow Analysis)\n"
-        f"• **주도 강세 섹터**: [수급 쏠림 섹터 분석]\n"
-        f"• **거래대금 집중 종목 및 수급 특징**: [상위 거래 종목 분석 및 인버스/레버리지 메커니즘 추론]\n\n"
-        f"---\n\n"
-        f"### 4. 🎯 [3성급★★★] 원자재, 환율 & 자산시장 시사점 (Alternative Risk)\n"
-        f"• **금/유가 시사점**: [원자재 상승과 인플레이션, 실물 안전자산 선호 분석]\n\n"
-        f"---\n\n"
-        f"### 5. 🚀 [Goldman Sachs Strategist] 내일의 전술적 자산 배분 대응 전략\n"
-        f"• **포트폴리오 리스크 관리**: [구체적인 현금 비중(%) 및 섹터별 비중 조절, 헤징 액션 플랜]"
+        "너는 골드만삭스/블룸버그 수석 마켓 전략가이자 헤지펀드 최고투자책임자(CIO)인 [STOCK BOT]이다.\n"
+        "너의 목적은 기관 및 고액자산가를 위한 월가 최고 레벨의 정밀 시황 리포트를 작성하는 것이다.\n\n"
+        "[언어 및 문자 절대 금지 규칙 - 위반 시 무효 처리]\n"
+        "1. 절대로 일본어 한자(漢字, 예: 需求, 圧力, 影響), 일본어 가타카나(예: リスク), 베트남어, 중국어를 쓰지 마라. 오직 100% 매끄럽고 품격 있는 한국어 금융 문장으로 작성하라.\n"
+        "2. 등락률 표기 시 제공된 숫자의 부호를 엄격히 지켜라 (-0.60%에 '상승' 표기 금지).\n\n"
+        "[필수 거시경제 금융 가드레일]\n"
+        "1. 원/달러 환율 하락(원화 강세) = 수출 기업 환차손 및 가격경쟁력 부담, 원자재/부품 수입 기업 원가 절감 수혜.\n"
+        "2. 원/달러 환율 상승(원화 약세) = 외국인 환차손 우려로 인한 매도 압력, 수출 기업 단기 매출 환산 착시 수혜.\n"
+        "3. 미 10년물 국채금리 하락 = 할인율(Multiple) 상방 압력 완화 -> 고PER 기술주/빅테크 밸류에이션 경감.\n"
+        "4. VIX 변동성 지수 및 달러 인덱스(DXY) 변화에 따른 월가 기관의 Volatility Control 펀드 수급 추론을 명시하라.\n"
+        "5. [전술적 자산 배분] 섹션에서는 '현금 비중 35% 확보', '반도체 벨류체인 분할 매수' 등 명확하고 구체적인 숫자 중심의 포트폴리오 대응책을 제시하라.\n\n"
+        "[출력 마크다운 양식 규격 - 절대 준수]\n"
+        "📈 **[STOCK BOT] 블룸버그 프리미엄 마감 시황 브리핑**\n\n"
+        "---\n\n"
+        "### 1. 🌐 글로벌 매크로 & 국내 증시 스코어카드 (Macro Dashboard)\n"
+        "• **국내 증시 현황**: KOSPI **[치]** | KOSDAQ **[치]**\n"
+        "• **시장 수급 메커니즘**: [수급 수치 기반 외인/기관 동향 분석]\n"
+        "• **글로벌 벤치마크 지표**: S&P 500 **[치]**, NASDAQ **[치]**, 야간선물(S&P500 **[치]** / NQ **[치]**), VIX **[치]**, DXY **[치]**, 미 10년물 금리 **[치]**, 원/달러 환율 **[치]**, WTI 유가 **[치]**, 금 선물 **[치]**, 비트코인 **[치]**\n\n"
+        "---\n\n"
+        "### 2. 📰 [3성급★★★] 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)\n"
+        "• **이슈 1: [금리 및 기술주 Multiple 인과관계]**\n"
+        "  - **메커니즘 분석**: [국채금리와 기술주 밸류에이션 정밀 추론]\n"
+        "• **이슈 2: [환율 및 외국인 수급 변동성]**\n"
+        "  - **월가 시각**: [환율 변동이 외국인 파생/현물 수급 및 수출 기업 수익성에 미치는 영향]\n\n"
+        "---\n\n"
+        "### 3. 🏢 [3성급★★★] 핵심 기업 실적 & 주도 섹터 (Capital Flow Analysis)\n"
+        "• **주도 강세 섹터**: [수급 쏠림 섹터 분석]\n"
+        "• **거래대금 집중 종목 및 수급 특징**: [상위 거래 종목 분석 및 인버스/레버리지 메커니즘 추론]\n\n"
+        "---\n\n"
+        "### 4. 🎯 [3성급★★★] 원자재, 환율 & 자산시장 시사점 (Alternative Risk)\n"
+        "• **금/유가 시사점**: [원자재 상승과 인플레이션, 실물 안전자산 선호 분석]\n\n"
+        "---\n\n"
+        "### 5. 🚀 [Goldman Sachs Strategist] 내일의 전술적 자산 배분 대응 전략\n"
+        "• **포트폴리오 리스크 관리**: [구체적인 현금 비중(%) 및 섹터별 비중 조절, 헤징 액션 플랜]"
     )
 
-    # 1. Gemini AI 시도
+    # 1. OpenRouter (DeepSeek R1 / Qwen 2.5) 1순위 실행
+    openrouter_res = call_openrouter_ai(prompt, system_instruction)
+    if openrouter_res:
+        return openrouter_res
+
+    # 2. Groq (Llama 3.3 70B) 2순위 실행
+    groq_res = call_groq_ai(prompt, system_instruction)
+    if groq_res:
+        return groq_res
+
+    # 3. Gemini 3순위 실행
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
@@ -289,7 +339,7 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
                         contents=prompt,
                         config=types.GenerateContentConfig(
                             system_instruction=system_instruction,
-                            temperature=0.3,
+                            temperature=0.2,
                         )
                     )
                     if response and response.text:
@@ -302,12 +352,7 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
         except Exception as e:
             print(f"⚠️ Gemini Client 생성 실패: {e}")
 
-    # 2. Gemini 429 시 Groq AI (Llama 3.3 70B) 고성능 가드레일 분석 구동
-    groq_result = call_groq_ai(prompt, system_instruction)
-    if groq_result:
-        return groq_result
-
-    # 3. 최후의 비상 템플릿
+    # 4. 최후의 비상 템플릿
     print("🚨 모든 AI 모델 호출 불가 - 비상 템플릿 가동")
     return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
 
@@ -316,12 +361,14 @@ def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, t
     """최후의 백업 분석 엔진"""
     kospi_info = krx_data.get("KOSPI", "6,258.77 (-0.60%)")
     kosdaq_info = krx_data.get("KOSDAQ", "798.81 (-0.36%)")
-    supply_info = krx_data.get("KOSPI_투자자동향", "외인 순매도 전환, 기관 파생 헤지물량 출하")
+    supply_info = krx_data.get("KOSPI_수급", "외인 순매도 전환, 기관 파생 헤지물량 출하")
 
     sp500 = global_data.get("S&P 500", "4,757.64 (+0.62%)")
     nasdaq = global_data.get("NASDAQ", "26,690.62 (+1.30%)")
     es = global_data.get("S&P500 선물", "4,765.25 (+0.15%)")
     nq = global_data.get("나스닥100 선물", "26,720.50 (+0.22%)")
+    vix = global_data.get("VIX 변동성지수", "15.42 (-1.20%)")
+    dxy = global_data.get("달러 인덱스", "104.12 (+0.08%)")
     us10y = global_data.get("미 10년물 국채금리", "4.66% (-0.21%)")
     usdkrw = global_data.get("원/달러 환율", "1,407.45원 (-0.96%)")
     wti = global_data.get("WTI 유가", "78.18달러 (+1.15%)")
@@ -350,7 +397,7 @@ def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, t
     - **시장 수급 메커니즘**: {supply_info}
 - **글로벌 벤치마크 지표**: 🏛️
     - **S&P 500**: {sp500}  |  **NASDAQ**: {nasdaq}  |  **야간선물**: S&P500 {es} / NQ {nq}
-    - **미 10년물 국채금리**: {us10y}  |  **원/달러 환율**: {usdkrw}
+    - **VIX**: {vix}  |  **DXY**: {dxy}  |  **미 10년물 금리**: {us10y}  |  **원/달러 환율**: {usdkrw}
     - **WTI 유가**: {wti}  |  **금 선물**: {gold}  |  **비트코인**: {btc}
 
 ---
@@ -397,8 +444,8 @@ def generate_unified_report(krx_data, global_data, naver_news, top_stocks, top_s
     아래 실시간 수집 데이터를 바탕으로, 각 지표와 사건 간의 월가급 금융 메커니즘을 정밀 추론하여 가독성이 뛰어난 전문 리포트를 작성하라.
 
     [수집된 실시간 시장 데이터]
-    - 국내 증시 현황 및 수급 금액: {krx_data}
-    - 해외 주요 매크로 지표 및 야간선물: {global_data}
+    - 국내 증시 현황 및 수급: {krx_data}
+    - 해외 주요 매크로 지표 (VIX/DXY/야간선물 포함): {global_data}
     - 헤드라인 핵심 뉴스: {naver_news}
     - 거래대금 상위 종목: {top_stocks}
     - 주도 강세 섹터: {top_sectors}
@@ -501,7 +548,7 @@ if __name__ == "__main__":
     global_macro = fetch_global_yahoo_data()
     naver_news, top_stocks, top_sectors = fetch_market_intelligence()
 
-    print("🤖 [STOCK BOT] 월가 최고급 이중화 AI 리포트 생성 중...")
+    print("🤖 [STOCK BOT] 3중 이중화 AI 월가 리포트 생성 중...")
     unified_report = generate_unified_report(krx_data, global_macro, naver_news, top_stocks, top_sectors)
 
     print("📲 메신저 송출 시작...")
