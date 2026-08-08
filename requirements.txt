@@ -1,6 +1,6 @@
 requests
 beautifulsoup4
-google-generativeai
+google-genai
 yfinance
 python-dotenv
 pillow

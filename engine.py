@@ -7,7 +7,8 @@ import time
 import warnings
 from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import requests
 import yfinance as yf
 
@@ -62,9 +63,6 @@ if os.path.exists("kakao_token.json"):
             KAKAO_REFRESH_TOKEN = k_data.get("refresh_token") or KAKAO_REFRESH_TOKEN
     except Exception as e:
         print(f"⚠️ kakao_token.json 로드 실패: {e}")
-
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 
 def fetch_krx_market_summary():
@@ -207,33 +205,47 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
 
     system_instruction = (
         f"너는 블룸버그(Bloomberg) 수석 특파원이자 골드만삭스 수석 글로벌 마켓 전략가인 [STOCK BOT]이다.\n"
-        f"너는 단순 수급이나 ETF 시세를 나열하는 자가 아니다. 시장의 거시 경제 흐름, 기업 실적, 헤드라인 뉴스의 파급력을 깊이 있게 분석하라.\n"
+        f"단순 수급이나 지수를 단답으로 나열하지 마라. 매크로 지표, 뉴스의 영향력, 기업 실적의 파급력을 월가 최고 수준의 통찰력으로 분석하라.\n"
         f"답변은 반드시 '📈 **[STOCK BOT] 블룸버그 프리미엄 {'장전 모닝' if is_morning else '마감 시황'} 브리핑**'으로 시작해야 한다.\n"
-        f"제공된 [입력 데이터]에 없는 코스피/코스닥 지수 수치를 왜곡하거나 지어내지 마라(할루시네이션 절대 금지).\n"
-        f"소제목 작성 시 '3성급(⭐⭐⭐)' 표기에서 괄호 안 별표(⭐⭐⭐)를 절대로 누락하지 말고 '3성급(⭐⭐⭐)' 형태 그대로 출력하라.\n"
-        f"반드시 3성급(⭐⭐⭐) 핵심 이슈, 3성급(⭐⭐⭐) 주요 기업 실적/모멘텀, 3성급(⭐⭐⭐) 경제지표 분석을 명확히 구분하여 월가 최고 수준의 한국어로 작성하라."
+        f"제공된 [실제 수집 데이터]의 수치를 절대로 왜곡하거나 지어내지 마라(할루시네이션 금지).\n"
+        f"소제목 및 중요 섹션 작성 시 '3성급(⭐⭐⭐)' 표기를 반드시 '3성급(⭐⭐⭐)' 문자 그대로 유지하라.\n"
+        f"다음 3가지 섹션을 심층 분석하여 정교한 한국어로 작성하라:\n"
+        f"1. 📰 3성급(⭐⭐⭐) 글로벌 & 국내 핵심 이슈 분석\n"
+        f"2. 🏢 3성급(⭐⭐⭐) 핵심 기업 실적 & 시장 주도 섹터\n"
+        f"3. 🎯 3성급(⭐⭐⭐) 원자재, 환율 & 자산시장 시사점"
     )
 
-    # API 호출 가능한 표준 모델 스트링 명시
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+    except Exception as e:
+        print(f"⚠️ Gemini Client 생성 실패: {e}")
+        return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
+
+    # 신규 SDK 전용 모델 우선순위 목록
     target_models = [
         "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
         "gemini-1.5-flash",
-        "gemini-1.5-pro",
     ]
 
     for m_name in target_models:
         try:
-            model = genai.GenerativeModel(model_name=m_name, system_instruction=system_instruction)
-            res = model.generate_content(prompt)
-            if res and res.text:
-                cleaned = sanitize_report_text(res.text)
+            response = client.models.generate_content(
+                model=m_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.7,
+                )
+            )
+            if response and response.text:
+                cleaned = sanitize_report_text(response.text)
                 if len(cleaned) > 300 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
-                    print(f"✅ AI 모델 ({m_name}) 리포트 생성 성공!")
+                    print(f"✅ 신규 SDK AI 모델 ({m_name}) 리포트 생성 성공!")
                     return cleaned
         except Exception as e:
             err_msg = str(e)
             print(f"⚠️ 모델 {m_name} 호출 에러: {err_msg}")
-            # 429 또는 404 발생 시 즉시 대기 없이 다음 백업 모델로 넘어가 속도 확보
             continue
 
     print("🚨 모든 AI 모델 호출 불가 - 동적 프리미엄 리포트 백업 엔진 가동")
@@ -306,7 +318,7 @@ def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, t
 def generate_unified_report(krx_data, global_data, naver_news, top_stocks, top_sectors):
     prompt = f"""
     [현재 모드]: {mode_title}
-    아래 수집된 실제 데이터 기반으로 블룸버그 수석 기자의 관점에서 깊이 있는 리포트를 작성하라.
+    아래 수집된 실제 데이터 기반으로 블룸버그 수석 기자의 관점에서 깊이 있는 마감 리포트를 작성하라.
 
     [실제 수집 데이터]
     - 국내 증시 지수 및 수급: {krx_data}
@@ -413,7 +425,7 @@ if __name__ == "__main__":
     global_macro = fetch_global_yahoo_data()
     naver_news, top_stocks, top_sectors = fetch_market_intelligence()
 
-    print("🤖 [STOCK BOT] 리포트 생성 중...")
+    print("🤖 [STOCK BOT] 신규 AI 리포트 생성 중...")
     unified_report = generate_unified_report(krx_data, global_macro, naver_news, top_stocks, top_sectors)
 
     print("📲 메신저 송출 시작...")
