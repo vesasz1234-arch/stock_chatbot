@@ -25,7 +25,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 한국 시간 기준 실행 시각 계산 후 적절한 모드로 실행
       - name: Run Stock Bot Engine
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -35,7 +34,6 @@ jobs:
           KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          # 현재 KST 시간 구하기 (UTC + 9시간)
           KST_HOUR=$(TZ=Asia/Seoul date +%H)
           
           if [ $KST_HOUR -lt 12 ]; then
