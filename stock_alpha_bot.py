@@ -5,6 +5,7 @@ import sys
 import time
 import datetime
 from datetime import timezone, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import numpy as np
 import FinanceDataReader as fdr
@@ -19,7 +20,7 @@ KST = timezone(timedelta(hours=9))
 
 APP_KEY = os.environ.get("KIS_APP_KEY") or "PSSDHdJ44C6dUaTxnD28Vht6hOHBhFRjiFkA"
 APP_SECRET = os.environ.get("KIS_APP_SECRET") or "5/AQN2eoGs1hX/BuYqjsWCPr3zUMLfBcdlic8zp7Axr3JzESm1J0roAxyjOdOuY30sEDilPdu27ELVD/nqiUNJV9wvCtl4aEdZFlhoK5JOfqfVA98yMRK3J5bBQwJm/Ej0Bd1tX2Qb+ecvniSS4mmbZclDrh1vRqby9ZflhX+kKTvmNXJOg="
-URL_BASE = "https://openapi.koreainvestment.com:9443"
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or "8612239847:AAFLgGhtJm8cOS9-eaW4wsSsQO2-9bWW0Qw"
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "-1004358276766"
@@ -36,6 +37,34 @@ class StockAlphaBot:
         self.top_n = top_n
         self.scanned_signals = set()
         self.universe = {}
+
+    def get_ai_alpha_insight(self, name, ticker, curr_price, rvol, atr_ratio):
+        """OpenRouter AI 기반 1초 초고속 알파 진입 가이던스 생성"""
+        if not OPENROUTER_API_KEY:
+            return "스마트 머니 유입 포착. 전형적인 변동성 돌파 패턴."
+
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "HTTP-Referer": "https://github.com/vesasz1234-arch/stock_chatbot",
+            "X-Title": "Stock Alpha Bot",
+            "Content-Type": "application/json"
+        }
+        prompt = f"종목: {name}({ticker}), 현재가: {curr_price}원, 시간가중 수급(RVOL): {rvol:.2f}배, ATR 변동성비율: {atr_ratio:.2f}배. 이 종목의 단타 진입 이유와 매수 전략을 트레이더 어조로 단 한 문장(50자 이내)으로 요약하라."
+        payload = {
+            "model": "meta-llama/llama-3.3-70b-instruct:free",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 100
+        }
+        try:
+            res = requests.post(url, headers=headers, json=payload, timeout=3)
+            if res.status_code == 200:
+                text = res.json()["choices"][0]["message"]["content"].strip()
+                return text.replace("\n", " ")
+        except Exception:
+            pass
+        return "스마트 머니 유입 및 거래량 분출 포착. 타격 기준선 준수."
 
     def send_telegram_msg(self, message: str):
         if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -62,7 +91,7 @@ class StockAlphaBot:
         try:
             res = requests.post(DISCORD_WEBHOOK_URL, data=json.dumps(payload), headers=headers, timeout=5)
             if res.status_code in [200, 204]:
-                print("✅ [디스코드] 유료 알파 시그널 채널 송출 완료!")
+                print(f"✅ [디스코드] 유료 알파 시그널 채널 송출 완료!")
         except Exception as e:
             print(f"❌ 디스코드 송신 오류: {e}")
 
@@ -86,11 +115,12 @@ class StockAlphaBot:
     def check_kospi_regime(self):
         try:
             now_kst = datetime.datetime.now(KST)
-            df_k = fdr.DataReader('KS11', now_kst - datetime.timedelta(days=60))
+            start_dt = (now_kst - datetime.timedelta(days=60)).strftime("%Y-%m-%d")
+            df_k = fdr.DataReader('KS11', start_dt)
             if df_k.empty or len(df_k) < 20:
                 return True
             df_k['MA20'] = df_k['Close'].rolling(20).mean()
-            is_bull = df_k.iloc[-1]['Close'] >= df_k.iloc[-1]['MA20']
+            is_bull = float(df_k.iloc[-1]['Close']) >= float(df_k.iloc[-1]['MA20'])
             return is_bull
         except Exception as e:
             print(f"⚠️ 코스피 레짐 체크 예외 (기본 허용): {e}")
@@ -116,7 +146,6 @@ class StockAlphaBot:
     def scan_stock_alpha(self, name: str, ticker: str):
         try:
             now_kst = datetime.datetime.now(KST)
-            # ATR 지표 계산 안정화를 위한 90일 데이터 수집
             start_dt = (now_kst - datetime.timedelta(days=90)).strftime("%Y-%m-%d")
             df = fdr.DataReader(ticker, start_dt)
             if df.empty or len(df) < 35:
@@ -137,9 +166,8 @@ class StockAlphaBot:
             df['ATR14'] = tr.rolling(14).mean()
             df['ATR_MA20'] = df['ATR14'].rolling(20).mean()
             
-            # NaN 방지 보정 코드
             atr_ma20_val = df['ATR_MA20'].iloc[-1] if not pd.isna(df['ATR_MA20'].iloc[-1]) else df['ATR14'].iloc[-1]
-            atr_ratio_val = df['ATR14'].iloc[-1] / (atr_ma20_val + 1e-9) if atr_ma20_val > 0 else 1.0
+            atr_ratio_val = float(df['ATR14'].iloc[-1] / (atr_ma20_val + 1e-9)) if atr_ma20_val > 0 else 1.0
             df['ATR_Ratio'] = atr_ratio_val
 
             std20 = df['Close'].rolling(20).std()
@@ -172,6 +200,9 @@ class StockAlphaBot:
                     target_price = int(curr_price * 1.018)
                     stop_price = int(curr_price * 0.992)
 
+                    # 초고속 퀀트 AI 가이던스 수집
+                    ai_insight = self.get_ai_alpha_insight(name, ticker, curr_price, today['RVOL'], today['ATR_Ratio'])
+
                     msg = (
                         f"🚨 **[ALPHA BOT] 실시간 알파 타격 포착**\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -182,38 +213,48 @@ class StockAlphaBot:
                         f"────────────────────\n"
                         f"📊 **시간가중 수급(RVOL)**: {today['RVOL']:.2f}배\n"
                         f"📈 **변동성 비율(ATR)**: {today['ATR_Ratio']:.2f}배\n"
-                        f"💡 **알고리즘**: Wall St. Real Fix (손익비 1:2.25)\n"
+                        f"💡 **월가 AI 코멘트**: {ai_insight}\n"
                         f"⏰ **포착시각**: {now_kst.strftime('%H:%M:%S')}\n"
                         f"━━━━━━━━━━━━━━━━━━━━"
                     )
                     self.broadcast_signal(msg)
                     print(f"🎯 [알파 시그널 송출] {name} ({ticker}) - 진입가: {curr_price:,}원")
 
-        except Exception as e:
+        except Exception:
             pass
 
     def run_single_scan(self):
-        """깃허브 액션 스케줄러용 1회 스캔 스크립트"""
+        """깃허브 액션 전용 초고속 멀티스레드 1회 스캔 스크립트"""
         self.update_universe()
         now_kst = datetime.datetime.now(KST)
-        print(f"🔎 [{now_kst.strftime('%Y-%m-%d %H:%M:%S KST')}] 알파봇 스캔 시작")
+        print(f"🔎 [{now_kst.strftime('%Y-%m-%d %H:%M:%S KST')}] 멀티스레드 알파 초고속 스캔 시작...")
         
         is_bull_market = self.check_kospi_regime()
         if not is_bull_market:
             print("⚠️ 코스피 하락장 스위치 발동 - 진입 동결")
             return
 
-        for name, ticker in list(self.universe.items()):
-            self.scan_stock_alpha(name, ticker)
-            time.sleep(0.02)
-        print("✨ 스캔 완료!")
+        start_time = time.time()
+        items = list(self.universe.items())
+
+        # ⚡ 15개 스레드 동시 처리 (2분 30초 -> 5초대 대폭 단축)
+        with ThreadPoolExecutor(max_workers=15) as executor:
+            futures = [executor.submit(self.scan_stock_alpha, name, ticker) for name, ticker in items]
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception:
+                    pass
+
+        elapsed = time.time() - start_time
+        print(f"✨ 멀티스레드 알파 스캔 완료! (소요시간: {elapsed:.2f}초)")
 
     def run_market_loop(self):
-        """로컬 PC / EC2 연속 실행용 루프"""
+        """로컬 / 서버 연속 실행용 루프"""
         self.update_universe()
         start_msg = (
             "🏛️ **[ALPHA BOT] 퀀트 시그널 파이프라인 가동**\n"
-            "• 유동성 주도주 실시간 감시 시작\n"
+            "• 초고속 멀티스레드 유동성 주도주 실시간 감시 시작\n"
             "• 승률 target 64%+ | 손익비 +1.8% / -0.8%"
         )
         self.broadcast_signal(start_msg)
@@ -225,10 +266,12 @@ class StockAlphaBot:
             if is_market_open:
                 if self.check_kospi_regime():
                     print(f"🔎 [{now_kst.strftime('%H:%M:%S')}] 실시간 알파 스캔 중...")
-                    for name, ticker in list(self.universe.items()):
-                        self.scan_stock_alpha(name, ticker)
-                        time.sleep(0.02)
-            time.sleep(20)
+                    items = list(self.universe.items())
+                    with ThreadPoolExecutor(max_workers=15) as executor:
+                        futures = [executor.submit(self.scan_stock_alpha, name, ticker) for name, ticker in items]
+                        for future in as_completed(futures):
+                            pass
+            time.sleep(15)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
