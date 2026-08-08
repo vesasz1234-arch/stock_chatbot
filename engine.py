@@ -200,7 +200,6 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
         print("⚠️ GEMINI_API_KEY 없음 - 백업 엔진을 가동합니다.")
         return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
 
-    # API 키 검증 디버깅 출력 (★필수 확인★)
     key_preview = f"{GEMINI_API_KEY[:8]}...{GEMINI_API_KEY[-4:]}" if len(GEMINI_API_KEY) > 12 else "INVALID_KEY"
     print(f"🔑 [DEBUG] 현재 구동 중인 GEMINI_API_KEY: {key_preview}")
 
@@ -224,11 +223,11 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
         print(f"⚠️ Gemini Client 생성 실패: {e}")
         return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
 
+    # 💡 현재 AI Studio 무료 티어에서 활성화된 Gemini 2.5 라인업 적용
     target_models = [
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
     ]
 
     for m_name in target_models:
