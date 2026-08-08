@@ -45,6 +45,7 @@ mode_title = (
 # 🔑 환경 변수 및 토큰 설정
 # =========================================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY")
@@ -195,14 +196,47 @@ def fetch_market_intelligence():
     return naver_news, top_stocks, top_sectors
 
 
+def call_groq_ai(prompt, system_instruction):
+    """보조 AI 엔진: Groq API (Llama 3.3 70B) 호출"""
+    if not GROQ_API_KEY:
+        print("⚠️ GROQ_API_KEY 미설정 - Groq 엔진을 스킵합니다.")
+        return None
+
+    key_preview = f"{GROQ_API_KEY[:8]}...{GROQ_API_KEY[-4:]}" if len(GROQ_API_KEY) > 12 else "INVALID_KEY"
+    print(f"🚀 [Groq AI Engine] Llama-3.3-70B 가동 중... (Key: {key_preview})")
+
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.6,
+        "max_tokens": 2500
+    }
+
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=25)
+        if res.status_code == 200:
+            data = res.json()
+            text = data["choices"][0]["message"]["content"]
+            cleaned = sanitize_report_text(text)
+            if len(cleaned) > 400:
+                print("✅ [SUCCESS] Groq Llama-3.3-70B AI 프리미엄 리포트 생성 완료!")
+                return cleaned
+        else:
+            print(f"⚠️ Groq API 오류 ({res.status_code}): {res.text[:150]}")
+    except Exception as e:
+        print(f"⚠️ Groq AI 호출 예외: {e}")
+    return None
+
+
 def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top_sectors):
-    if not GEMINI_API_KEY:
-        print("⚠️ GEMINI_API_KEY 없음 - 백업 엔진을 가동합니다.")
-        return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
-
-    key_preview = f"{GEMINI_API_KEY[:8]}...{GEMINI_API_KEY[-4:]}" if len(GEMINI_API_KEY) > 12 else "INVALID_KEY"
-    print(f"🔑 [DEBUG] 현재 구동 중인 GEMINI_API_KEY: {key_preview}")
-
     system_instruction = (
         f"너는 월스트리트 헤드쿼터의 수석 마켓 전략가이자 블룸버그 특파원인 [STOCK BOT]이다.\n"
         f"단순 시세 수치나 뉴스 제목 나열은 가치가 없는 쓰레기 브리핑이다. 거시경제 매크로 파급 경로, 미 국채금리와 기술주 밸류에이션 할인율(Multiple), 외인/기관의 파생시장 하방 델타 헤지 성격 등 월가 최고 수준의 통찰력과 인과관계를 정교하게 분석하라.\n"
@@ -217,46 +251,43 @@ def call_gemini_clean(prompt, krx_data, global_data, naver_news, top_stocks, top
         f"5. 🚀 [Goldman Sachs Strategist] 내일의 전술적 자산 배분 대응 전략"
     )
 
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-    except Exception as e:
-        print(f"⚠️ Gemini Client 생성 실패: {e}")
-        return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
-
-    # 💡 현재 AI Studio 무료 티어에서 활성화된 Gemini 2.5 라인업 적용
-    target_models = [
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-pro",
-    ]
-
-    for m_name in target_models:
+    # 1. Gemini AI 시도
+    if GEMINI_API_KEY:
         try:
-            response = client.models.generate_content(
-                model=m_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.6,
-                )
-            )
-            if response and response.text:
-                cleaned = sanitize_report_text(response.text)
-                if len(cleaned) > 400 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
-                    print(f"✅ [SUCCESS] 월가 AI 모델 ({m_name}) 프리미엄 리포트 생성 완료!")
-                    return cleaned
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            target_models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+            for m_name in target_models:
+                try:
+                    response = client.models.generate_content(
+                        model=m_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            temperature=0.6,
+                        )
+                    )
+                    if response and response.text:
+                        cleaned = sanitize_report_text(response.text)
+                        if len(cleaned) > 400 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
+                            print(f"✅ [SUCCESS] 구글 Gemini AI ({m_name}) 리포트 생성 완료!")
+                            return cleaned
+                except Exception as e:
+                    print(f"⚠️ Gemini {m_name} 호출 오류: {str(e)[:100]}")
         except Exception as e:
-            err_msg = str(e)
-            print(f"⚠️ 모델 {m_name} 호출 에러: {err_msg[:120]}...")
-            time.sleep(2)
-            continue
+            print(f"⚠️ Gemini Client 생성 실패: {e}")
 
-    print("🚨 모든 AI 모델 호출 불가 - 백업 엔진 가동")
+    # 2. Gemini 쿼터 초과 시 Groq AI (Llama 3.3 70B) 우회 가동
+    groq_result = call_groq_ai(prompt, system_instruction)
+    if groq_result:
+        return groq_result
+
+    # 3. 최후의 비상 템플릿
+    print("🚨 모든 AI 모델 호출 불가 - 백업 템플릿 가동")
     return build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors)
 
 
 def build_dynamic_rich_fallback(krx_data, global_data, naver_news, top_stocks, top_sectors):
-    """골드만삭스/블룸버그 특파원급 백업 분석 엔진"""
+    """최후의 백업 분석 엔진"""
     kospi_info = krx_data.get("KOSPI", "6,258.77 (37.61 -0.60%)")
     kosdaq_info = krx_data.get("KOSDAQ", "798.81 (2.86 -0.36%)")
     supply_info = krx_data.get("KOSPI_투자자동향", "외인 순매도 전환, 기관 파생 헤지물량 출하")
@@ -427,7 +458,7 @@ def send_telegram_message(text_content):
     chunks = [text_content[i : i + 3500] for i in range(0, len(text_content), 3500)]
 
     for chunk in chunks:
-        payload = {"chat_id": chunk, "text": chunk, "parse_mode": "Markdown"}
+        payload = {"chat_id": chat_id, "text": chunk, "parse_mode": "Markdown"}
         res = requests.post(url, data=payload, timeout=10)
         if res.status_code != 200:
             payload.pop("parse_mode", None)
@@ -442,7 +473,7 @@ if __name__ == "__main__":
     global_macro = fetch_global_yahoo_data()
     naver_news, top_stocks, top_sectors = fetch_market_intelligence()
 
-    print("🤖 [STOCK BOT] 월가 전문 AI 리포트 생성 중...")
+    print("🤖 [STOCK BOT] 이중화 AI 리포트 생성 중...")
     unified_report = generate_unified_report(krx_data, global_macro, naver_news, top_stocks, top_sectors)
 
     print("📲 메신저 송출 시작...")
