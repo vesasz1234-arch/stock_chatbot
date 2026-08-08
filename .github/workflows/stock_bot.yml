@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -35,7 +35,6 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           KST_HOUR=$(TZ=Asia/Seoul date +%H)
-          
           if [ $KST_HOUR -lt 12 ]; then
             echo "🌅 장전 모드로 실행합니다."
             python engine.py --mode morning
