@@ -25,7 +25,7 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or "8612239847:AAFLgGhtJm8cOS9-eaW4wsSsQO2-9bWW0Qw"
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "-1004358276766"
 
-# [유료 알파봇 전용 디스코드 웹후크 URL - #🤖-알파-시그널 채널용]
+# [유료 알파봇 전용 디스코드 웹후크 URL]
 DISCORD_WEBHOOK_URL = (
     os.environ.get("DISCORD_ALPHA_WEBHOOK_URL")
     or os.environ.get("DISCORD_WEBHOOK_URL")
@@ -39,7 +39,7 @@ class StockAlphaBot:
         self.universe = {}
 
     def get_ai_alpha_insight(self, name, ticker, curr_price, rvol, atr_ratio):
-        """OpenRouter AI 기반 1초 초고속 알파 진입 가이던스 생성"""
+        """OpenRouter AI 기반 초고속 알파 진입 가이던스"""
         if not OPENROUTER_API_KEY:
             return "스마트 머니 유입 포착. 전형적인 변동성 돌파 패턴."
 
@@ -200,7 +200,6 @@ class StockAlphaBot:
                     target_price = int(curr_price * 1.018)
                     stop_price = int(curr_price * 0.992)
 
-                    # 초고속 퀀트 AI 가이던스 수집
                     ai_insight = self.get_ai_alpha_insight(name, ticker, curr_price, today['RVOL'], today['ATR_Ratio'])
 
                     msg = (
@@ -223,21 +222,23 @@ class StockAlphaBot:
         except Exception:
             pass
 
-    def run_single_scan(self):
-        """깃허브 액션 전용 초고속 멀티스레드 1회 스캔 스크립트"""
+    def run_single_scan(self, ignore_regime=False):
+        """1회 스캔 실행 (ignore_regime=True 시 하락장 필터 무시 강제 스캔)"""
         self.update_universe()
         now_kst = datetime.datetime.now(KST)
         print(f"🔎 [{now_kst.strftime('%Y-%m-%d %H:%M:%S KST')}] 멀티스레드 알파 초고속 스캔 시작...")
         
-        is_bull_market = self.check_kospi_regime()
-        if not is_bull_market:
-            print("⚠️ 코스피 하락장 스위치 발동 - 진입 동결")
-            return
+        if not ignore_regime:
+            is_bull_market = self.check_kospi_regime()
+            if not is_bull_market:
+                print("⚠️ 코스피 하락장 스위치 발동 - 진입 동결 (정상 동작)")
+                return
+        else:
+            print("🔓 [테스트 모드] 코스피 하락장 필터 우회하여 강제 스캔을 진행합니다.")
 
         start_time = time.time()
         items = list(self.universe.items())
 
-        # ⚡ 15개 스레드 동시 처리 (2분 30초 -> 5초대 대폭 단축)
         with ThreadPoolExecutor(max_workers=15) as executor:
             futures = [executor.submit(self.scan_stock_alpha, name, ticker) for name, ticker in items]
             for future in as_completed(futures):
@@ -249,37 +250,11 @@ class StockAlphaBot:
         elapsed = time.time() - start_time
         print(f"✨ 멀티스레드 알파 스캔 완료! (소요시간: {elapsed:.2f}초)")
 
-    def run_market_loop(self):
-        """로컬 / 서버 연속 실행용 루프"""
-        self.update_universe()
-        start_msg = (
-            "🏛️ **[ALPHA BOT] 퀀트 시그널 파이프라인 가동**\n"
-            "• 초고속 멀티스레드 유동성 주도주 실시간 감시 시작\n"
-            "• 승률 target 64%+ | 손익비 +1.8% / -0.8%"
-        )
-        self.broadcast_signal(start_msg)
-
-        while True:
-            now_kst = datetime.datetime.now(KST)
-            is_market_open = (now_kst.hour == 9 and now_kst.minute >= 0) or (10 <= now_kst.hour < 15) or (now_kst.hour == 15 and now_kst.minute <= 30)
-
-            if is_market_open:
-                if self.check_kospi_regime():
-                    print(f"🔎 [{now_kst.strftime('%H:%M:%S')}] 실시간 알파 스캔 중...")
-                    items = list(self.universe.items())
-                    with ThreadPoolExecutor(max_workers=15) as executor:
-                        futures = [executor.submit(self.scan_stock_alpha, name, ticker) for name, ticker in items]
-                        for future in as_completed(futures):
-                            pass
-            time.sleep(15)
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="1회 스캔 후 종료 (GitHub Actions 전용)")
+    parser.add_argument("--once", action="store_true", help="1회 스캔 후 종료")
+    parser.add_argument("--ignore-regime", action="store_true", help="하락장 스위치 우회 강제 스캔")
     args = parser.parse_args()
 
     bot = StockAlphaBot(top_n=200)
-    if args.once:
-        bot.run_single_scan()
-    else:
-        bot.run_market_loop()
+    bot.run_single_scan(ignore_regime=args.ignore_regime)
