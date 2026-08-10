@@ -4,8 +4,8 @@ import os
 import sys
 import time
 import datetime
-import threading
 from datetime import timezone, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import numpy as np
 import FinanceDataReader as fdr
@@ -42,7 +42,6 @@ class RealTradeAlphaBot:
         self.universe = {}
         self.init_kis_token()
         self.sync_holdings_from_balance()
-        self.start_dedicated_monitor_thread()
 
     def init_kis_token(self):
         """한국투자증권 실전 API 토큰 발급"""
@@ -67,27 +66,6 @@ class RealTradeAlphaBot:
                 print(f"[EXCEPTION] Token Error: {e}")
                 break
 
-    def start_dedicated_monitor_thread(self):
-        """독립 매도 전용 백그라운드 스레드 가동 (1초 간격 미세 감시)"""
-        def dedicated_monitor_loop():
-            while True:
-                try:
-                    now_kst = datetime.datetime.now(KST)
-                    is_market_open = (now_kst.hour == 9 and now_kst.minute >= 0) or (10 <= now_kst.hour < 15) or (now_kst.hour == 15 and now_kst.minute <= 20)
-                    if is_market_open:
-                        self.monitor_and_auto_sell()
-                except Exception as e:
-                    print(f"[MONITOR THREAD EXCEPTION] {e}")
-                time.sleep(1)
-
-        t = threading.Thread(target=dedicated_monitor_loop, daemon=True)
-        t.start()
-        print("⚡ [SYSTEM] 1초 단위 초고속 독립 매도 감시 스레드 가동 완료!")
-
-    def check_kospi_regime(self):
-        """코스피 하락장 필터 임시 무력화 (실험용)"""
-        return True
-
     def get_kis_realtime_stock_info(self, ticker: str):
         """한투 실시간 시세 단일 조회 (FHKST01010100)"""
         if not self.access_token:
@@ -108,10 +86,9 @@ class RealTradeAlphaBot:
             res = requests.get(url, headers=headers, params=params, timeout=3)
             if res.status_code == 200:
                 output = res.json().get("output", {})
-                stck_prpr = output.get("stck_prpr")
-                if stck_prpr:
+                if output.get("stck_prpr"):
                     return {
-                        "price": int(stck_prpr),
+                        "price": int(output.get("stck_prpr", 0)),
                         "open": int(output.get("stck_oprc", 0)),
                         "high": int(output.get("stck_hgpr", 0)),
                         "low": int(output.get("stck_lwpr", 0)),
@@ -304,10 +281,22 @@ class RealTradeAlphaBot:
         except Exception as e:
             print(f"[UNIVERSE ERROR] {e}")
 
-    def scan_and_trade_kis(self, name: str, ticker: str):
-        """한투 API 실시간 데이터 기반 종목 스캔"""
+    def check_kospi_regime(self):
         try:
-            time.sleep(0.06)
+            now_kst = datetime.datetime.now(KST)
+            start_dt = (now_kst - datetime.timedelta(days=60)).strftime("%Y-%m-%d")
+            df_k = fdr.DataReader('KS11', start_dt)
+            if df_k.empty or len(df_k) < 20:
+                return True
+            df_k['MA20'] = df_k['Close'].rolling(20).mean()
+            return float(df_k.iloc[-1]['Close']) >= float(df_k.iloc[-1]['MA20'])
+        except Exception:
+            return True
+
+    def scan_and_trade_kis(self, name: str, ticker: str):
+        """100% 한투 API 실시간 데이터 기반 종목 분석 및 매수"""
+        try:
+            time.sleep(0.05)  # 초당 호출 제한(Rate Limit) 방어 스로틀링
             real_data = self.get_kis_realtime_stock_info(ticker)
             if not real_data:
                 return
@@ -319,12 +308,13 @@ class RealTradeAlphaBot:
             vol = real_data["volume"]
             chg_rate = real_data["change_rate"]
 
-            cond_trend = (curr_price > open_price) and (chg_rate >= 1.5)
-            cond_volume = vol >= 50000
+            # 한투 실시간 스캔 돌파 조건
+            cond_trend = (curr_price > open_price) and (chg_rate >= 1.5)  # 양봉 및 당일 +1.5% 이상 강세
+            cond_volume = vol >= 50000                                    # 최소 거래량 확보
             
             total_range = max(high_price - low_price, 1)
             upper_shadow_ratio = (high_price - max(open_price, curr_price)) / total_range
-            cond_shadow = upper_shadow_ratio <= 0.35
+            cond_shadow = upper_shadow_ratio <= 0.35                       # 윗꼬리 35% 이하 깔끔한 장대양봉
 
             if cond_trend and cond_volume and cond_shadow:
                 now_kst = datetime.datetime.now(KST)
@@ -356,27 +346,19 @@ class RealTradeAlphaBot:
             pass
 
     def monitor_and_auto_sell(self):
-        """독립 스레드 매도 모니터링 (1초 단위 초고속 모니터링)"""
+        """한투 실시간 API 기반 초단위 익절/손절 감시 매도"""
         if not self.active_positions:
             return
 
         for ticker, pos in list(self.active_positions.items()):
             try:
-                curr_price = 0
                 real_data = self.get_kis_realtime_stock_info(ticker)
-                if real_data:
-                    curr_price = real_data["price"]
-                else:
-                    start_dt = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
-                    df_now = fdr.DataReader(ticker, start_dt)
-                    if not df_now.empty:
-                        curr_price = int(df_now['Close'].iloc[-1])
-
-                if curr_price == 0:
+                if not real_data:
                     continue
-
+                
+                curr_price = real_data["price"]
                 profit_pct = ((curr_price - pos["buy_price"]) / pos["buy_price"]) * 100
-                print(f"👀 [독립 감시 스레드] {pos['name']}({ticker}) 현재가: {curr_price:,}원 ({profit_pct:+.2f}%) | 목표가: {pos['target']:,}원 | 손절가: {pos['stop']:,}원")
+                print(f"👀 [KIS 실시간 감시] {pos['name']}({ticker}) 현재가: {curr_price:,}원 ({profit_pct:+.2f}%) | 익절가: {pos['target']:,}원 | 손절가: {pos['stop']:,}원")
 
                 if curr_price >= pos["target"]:
                     if self.send_real_sell_order(pos["name"], ticker, pos["qty"], f"TARGET PROFIT (+{profit_pct:.2f}%)"):
@@ -418,6 +400,10 @@ class RealTradeAlphaBot:
                     time.sleep(10)
                     continue
 
+                # 1. 보유 종목 실시간 익절/손절 감시
+                self.monitor_and_auto_sell()
+
+                # 2. 한투 실시간 API 100% 기반 유니버스 스캔
                 for name, ticker in self.universe.items():
                     self.scan_and_trade_kis(name, ticker)
 
