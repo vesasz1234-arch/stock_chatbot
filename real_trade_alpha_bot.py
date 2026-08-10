@@ -294,18 +294,43 @@ class RealTradeAlphaBot:
         except Exception:
             pass
 
+    def get_naver_top200(self):
+        """KRX IP 차단 대응 네이버 금융 시가총액 상위 종목 수집 백업 엔진"""
+        universe = {}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        try:
+            for market in ["KOSPI", "KOSDAQ"]:
+                for page in range(1, 3):
+                    url = f"https://m.stock.naver.com/api/stocks/marketCap/{market}?page={page}&pageSize=100"
+                    res = requests.get(url, headers=headers, timeout=5)
+                    if res.status_code == 200:
+                        stocks = res.json().get("stocks", [])
+                        for s in stocks:
+                            code = str(s.get("itemCode", "")).zfill(6)
+                            name = str(s.get("stockName", ""))
+                            marcap = int(s.get("marketValue", 0))
+                            if code and name:
+                                universe[name] = (code, marcap)
+        except Exception as e:
+            print(f"[NAVER FALLBACK ERROR] {e}")
+
+        sorted_items = sorted(universe.items(), key=lambda x: x[1][1], reverse=True)[:self.top_n]
+        return {name: item[0] for name, item in sorted_items}
+
     def update_universe(self):
         print(f"🔍 [Universe Engine] Top {self.top_n} market cap universe loading...")
         try:
             df_krx = fdr.StockListing('KRX').dropna(subset=['Marcap'])
             df_sorted = df_krx.sort_values(by='Marcap', ascending=False)
             self.universe = {row['Name']: str(row['Code']).zfill(6) for _, row in df_sorted.head(self.top_n).iterrows()}
-            print(f"✅ Loaded {len(self.universe)} stocks.\n")
         except Exception as e:
-            print(f"[UNIVERSE ERROR] {e}")
+            print(f"⚠️ KRX API 접근 차단 감지. 네이버 백업 엔진 가동...")
+            self.universe = self.get_naver_top200()
+
+        print(f"✅ Loaded {len(self.universe)} stocks.\n")
 
     def scan_and_trade_kis(self, name: str, ticker: str):
-        """한투 API 실시간 데이터 기반 종목 스캔"""
+        """한투 API 실시간 데이터 기반 종목 스캔 및 실전 매수"""
         try:
             time.sleep(0.06)
             real_data = self.get_kis_realtime_stock_info(ticker)

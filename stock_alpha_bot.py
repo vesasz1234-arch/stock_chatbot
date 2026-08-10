@@ -14,18 +14,10 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # =========================================================
-# ⏰ 한국 타임존(KST) 및 환경변수 설정
+# CONFIGURATION
 # =========================================================
 KST = timezone(timedelta(hours=9))
 
-APP_KEY = os.environ.get("KIS_APP_KEY") or "PSSDHdJ44C6dUaTxnD28Vht6hOHBhFRjiFkA"
-APP_SECRET = os.environ.get("KIS_APP_SECRET") or "5/AQN2eoGs1hX/BuYqjsWCPr3zUMLfBcdlic8zp7Axr3JzESm1J0roAxyjOdOuY30sEDilPdu27ELVD/nqiUNJV9wvCtl4aEdZFlhoK5JOfqfVA98yMRK3J5bBQwJm/Ej0Bd1tX2Qb+ecvniSS4mmbZclDrh1vRqby9ZflhX+kKTvmNXJOg="
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
-
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or "8612239847:AAFLgGhtJm8cOS9-eaW4wsSsQO2-9bWW0Qw"
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "-1004358276766"
-
-# [유료 알파봇 전용 디스코드 웹후크 URL]
 DISCORD_WEBHOOK_URL = (
     os.environ.get("DISCORD_ALPHA_WEBHOOK_URL")
     or os.environ.get("DISCORD_WEBHOOK_URL")
@@ -33,51 +25,61 @@ DISCORD_WEBHOOK_URL = (
 )
 
 class StockAlphaBot:
-    def __init__(self, top_n=200):
+    def __init__(self, top_n=200, ignore_regime=False):
         self.top_n = top_n
+        self.ignore_regime = ignore_regime
         self.scanned_signals = set()
         self.universe = {}
 
-    def get_ai_alpha_insight(self, name, ticker, curr_price, rvol, atr_ratio):
-        """OpenRouter AI 기반 초고속 알파 진입 가이던스"""
-        if not OPENROUTER_API_KEY:
-            return "스마트 머니 유입 포착. 전형적인 변동성 돌파 패턴."
+    def check_kospi_regime(self):
+        """코스피 하락장 필터 임시 무력화 (실험용)"""
+        return True
 
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "HTTP-Referer": "https://github.com/vesasz1234-arch/stock_chatbot",
-            "X-Title": "Stock Alpha Bot",
-            "Content-Type": "application/json"
-        }
-        prompt = f"종목: {name}({ticker}), 현재가: {curr_price}원, 시간가중 수급(RVOL): {rvol:.2f}배, ATR 변동성비율: {atr_ratio:.2f}배. 이 종목의 단타 진입 이유와 매수 전략을 트레이더 어조로 단 한 문장(50자 이내)으로 요약하라."
-        payload = {
-            "model": "meta-llama/llama-3.3-70b-instruct:free",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-            "max_tokens": 100
-        }
+    def get_naver_top200(self):
+        """KRX IP 차단 대응 네이버 금융 시가총액 상위 종목 수집 백업 엔진"""
+        universe = {}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         try:
-            res = requests.post(url, headers=headers, json=payload, timeout=3)
-            if res.status_code == 200:
-                text = res.json()["choices"][0]["message"]["content"].strip()
-                return text.replace("\n", " ")
-        except Exception:
-            pass
-        return "스마트 머니 유입 및 거래량 분출 포착. 타격 기준선 준수."
-
-    def send_telegram_msg(self, message: str):
-        if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-            return
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-        try:
-            res = requests.post(url, data=payload, timeout=5)
-            if res.status_code != 200:
-                payload_plain = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-                requests.post(url, data=payload_plain, timeout=5)
+            for market in ["KOSPI", "KOSDAQ"]:
+                for page in range(1, 3):
+                    url = f"https://m.stock.naver.com/api/stocks/marketCap/{market}?page={page}&pageSize=100"
+                    res = requests.get(url, headers=headers, timeout=5)
+                    if res.status_code == 200:
+                        stocks = res.json().get("stocks", [])
+                        for s in stocks:
+                            code = str(s.get("itemCode", "")).zfill(6)
+                            name = str(s.get("stockName", ""))
+                            marcap = int(s.get("marketValue", 0))
+                            if code and name:
+                                universe[name] = (code, marcap)
         except Exception as e:
-            print(f"❌ 텔레그램 송신 오류: {e}")
+            print(f"[NAVER FALLBACK ERROR] {e}")
+
+        sorted_items = sorted(universe.items(), key=lambda x: x[1][1], reverse=True)[:self.top_n]
+        return {name: item[0] for name, item in sorted_items}
+
+    def update_universe(self):
+        print("🔍 [Universe Engine] 상위 200개 주도주 유니버스 스캔 중...")
+        try:
+            df_krx = fdr.StockListing('KRX').dropna(subset=['Marcap'])
+            df_sorted = df_krx.sort_values(by='Marcap', ascending=False)
+            self.universe = {row['Name']: str(row['Code']).zfill(6) for _, row in df_sorted.head(self.top_n).iterrows()}
+        except Exception as e:
+            print(f"⚠️ KRX API 접근 차단 감지. 네이버 백업 엔진 가동...")
+            self.universe = self.get_naver_top200()
+
+        if self.universe:
+            print(f"✅ 주도주 유니버스 {len(self.universe)}개 종목 로딩 완료.\n")
+        else:
+            print("❌ 유니버스 로딩 최종 실패.\n")
+
+    def calculate_time_weighted_rvol(self, df):
+        now_kst = datetime.datetime.now(KST)
+        market_start = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
+        elapsed_minutes = max((now_kst - market_start).total_seconds() / 60.0, 1.0) if now_kst >= market_start else 1.0
+        time_factor = min(elapsed_minutes / 390.0, 1.0)
+        vol_ma10 = df['Volume'].iloc[:-1].tail(10).mean() + 1e-9
+        return (df['Volume'].iloc[-1] / time_factor) / vol_ma10
 
     def send_discord_msg(self, message: str):
         if not DISCORD_WEBHOOK_URL:
@@ -85,65 +87,17 @@ class StockAlphaBot:
         headers = {"Content-Type": "application/json"}
         payload = {
             "content": message,
-            "username": "🤖 [ALPHA BOT]",
+            "username": "🤖 [ALPHA SIGNAL BOT]",
             "avatar_url": "https://cdn-icons-png.flaticon.com/512/2593/2593211.png"
         }
         try:
             res = requests.post(DISCORD_WEBHOOK_URL, data=json.dumps(payload), headers=headers, timeout=5)
-            if res.status_code in [200, 204]:
-                print(f"✅ [디스코드] 유료 알파 시그널 채널 송출 완료!")
-        except Exception as e:
-            print(f"❌ 디스코드 송신 오류: {e}")
+            if res.status_code in (200, 204):
+                print("✅ [디스코드] 유료 알파 시그널 채널 송출 완료!")
+        except Exception:
+            pass
 
-    def broadcast_signal(self, message: str):
-        self.send_telegram_msg(message)
-        self.send_discord_msg(message)
-
-    def update_universe(self):
-        print(f"🔍 [Universe Engine] 상위 {self.top_n}개 주도주 유니버스 스캔 중...")
-        try:
-            df_krx = fdr.StockListing('KRX').dropna(subset=['Marcap'])
-            df_sorted = df_krx.sort_values(by='Marcap', ascending=False)
-            self.universe = {}
-            for _, row in df_sorted.head(self.top_n).iterrows():
-                code = str(row['Code']).zfill(6)
-                self.universe[row['Name']] = code
-            print(f"✅ 주도주 유니버스 {len(self.universe)}개 종목 로딩 완료.\n")
-        except Exception as e:
-            print(f"❌ 유니버스 로딩 실패: {e}")
-
-    def check_kospi_regime(self):
-        try:
-            now_kst = datetime.datetime.now(KST)
-            start_dt = (now_kst - datetime.timedelta(days=60)).strftime("%Y-%m-%d")
-            df_k = fdr.DataReader('KS11', start_dt)
-            if df_k.empty or len(df_k) < 20:
-                return True
-            df_k['MA20'] = df_k['Close'].rolling(20).mean()
-            is_bull = float(df_k.iloc[-1]['Close']) >= float(df_k.iloc[-1]['MA20'])
-            return is_bull
-        except Exception as e:
-            print(f"⚠️ 코스피 레짐 체크 예외 (기본 허용): {e}")
-            return True
-
-    def calculate_time_weighted_rvol(self, df):
-        now_kst = datetime.datetime.now(KST)
-        market_start = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
-        
-        if now_kst < market_start:
-            elapsed_minutes = 1.0
-        else:
-            elapsed_minutes = max((now_kst - market_start).total_seconds() / 60.0, 1.0)
-        
-        time_factor = min(elapsed_minutes / 390.0, 1.0)
-        
-        vol_ma10 = df['Volume'].iloc[:-1].tail(10).mean() + 1e-9
-        current_volume = df['Volume'].iloc[-1]
-        
-        projected_volume = current_volume / time_factor
-        return projected_volume / vol_ma10
-
-    def scan_stock_alpha(self, name: str, ticker: str):
+    def scan_stock(self, name: str, ticker: str):
         try:
             now_kst = datetime.datetime.now(KST)
             start_dt = (now_kst - datetime.timedelta(days=90)).strftime("%Y-%m-%d")
@@ -153,9 +107,7 @@ class StockAlphaBot:
 
             df['MA5'] = df['Close'].rolling(5).mean()
             df['MA20'] = df['Close'].rolling(20).mean()
-
-            rvol_weighted = self.calculate_time_weighted_rvol(df)
-            df['RVOL'] = rvol_weighted
+            df['RVOL'] = self.calculate_time_weighted_rvol(df)
 
             prev_close = df['Close'].shift(1)
             tr = pd.concat([
@@ -165,20 +117,17 @@ class StockAlphaBot:
             ], axis=1).max(axis=1)
             df['ATR14'] = tr.rolling(14).mean()
             df['ATR_MA20'] = df['ATR14'].rolling(20).mean()
-            
+
             atr_ma20_val = df['ATR_MA20'].iloc[-1] if not pd.isna(df['ATR_MA20'].iloc[-1]) else df['ATR14'].iloc[-1]
-            atr_ratio_val = float(df['ATR14'].iloc[-1] / (atr_ma20_val + 1e-9)) if atr_ma20_val > 0 else 1.0
-            df['ATR_Ratio'] = atr_ratio_val
+            df['ATR_Ratio'] = float(df['ATR14'].iloc[-1] / (atr_ma20_val + 1e-9)) if atr_ma20_val > 0 else 1.0
 
             std20 = df['Close'].rolling(20).std()
             df['BB_Upper'] = df['MA20'] + (std20 * 2.0)
-
             df['Gap_Up_Pct'] = (df['Open'] - prev_close) / (prev_close + 1e-9)
             df['First_Breakout'] = df['Close'].shift(1) < df['BB_Upper'].shift(1)
-            
+
             total_range = df['High'] - df['Low'] + 1e-9
-            upper_shadow = df['High'] - np.maximum(df['Open'], df['Close'])
-            df['Upper_Shadow_Ratio'] = upper_shadow / total_range
+            df['Upper_Shadow_Ratio'] = (df['High'] - np.maximum(df['Open'], df['Close'])) / total_range
 
             today = df.iloc[-1]
             today_str = now_kst.strftime("%Y-%m-%d")
@@ -192,69 +141,50 @@ class StockAlphaBot:
 
             if cond_gap and cond_first and cond_shadow and cond_volume and cond_trend and cond_volatility:
                 signal_key = f"{ticker}_{today_str}"
-                
+
                 if signal_key not in self.scanned_signals:
                     self.scanned_signals.add(signal_key)
-
                     curr_price = int(today['Close'])
-                    target_price = int(curr_price * 1.018)
-                    stop_price = int(curr_price * 0.992)
 
-                    ai_insight = self.get_ai_alpha_insight(name, ticker, curr_price, today['RVOL'], today['ATR_Ratio'])
-
-                    msg = (
-                        f"🚨 **[ALPHA BOT] 실시간 알파 타격 포착**\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"• **종목명**: {name} (`{ticker}`)\n"
-                        f"• **현재가 (진입)**: {curr_price:,}원\n"
-                        f"• 🎯 **목표가 (+1.8%)**: {target_price:,}원\n"
-                        f"• 🛑 **손절가 (-0.8%)**: {stop_price:,}원\n"
-                        f"────────────────────\n"
-                        f"📊 **시간가중 수급(RVOL)**: {today['RVOL']:.2f}배\n"
-                        f"📈 **변동성 비율(ATR)**: {today['ATR_Ratio']:.2f}배\n"
-                        f"💡 **월가 AI 코멘트**: {ai_insight}\n"
-                        f"⏰ **포착시각**: {now_kst.strftime('%H:%M:%S')}\n"
-                        f"━━━━━━━━━━━━━━━━━━━━"
-                    )
-                    self.broadcast_signal(msg)
                     print(f"🎯 [알파 시그널 송출] {name} ({ticker}) - 진입가: {curr_price:,}원")
-
+                    msg = (
+                        f"🚨 **[ALPHA SIGNAL] 주도주 돌파 포착 시그널**\n"
+                        f"• 종목명: **{name}** (`{ticker}`)\n"
+                        f"• 진입 권장가: {curr_price:,}원\n"
+                        f"• RVOL: {today['RVOL']:.2f}x | ATR 비중: {today['ATR_Ratio']:.2f}\n"
+                        f"• 🎯 목표 수익률: +1.8% | 🛑 손절 기준: -0.8%"
+                    )
+                    self.send_discord_msg(msg)
         except Exception:
             pass
 
-    def run_single_scan(self, ignore_regime=False):
-        """1회 스캔 실행 (ignore_regime=True 시 하락장 필터 무시 강제 스캔)"""
+    def run_scan(self):
         self.update_universe()
         now_kst = datetime.datetime.now(KST)
-        print(f"🔎 [{now_kst.strftime('%Y-%m-%d %H:%M:%S KST')}] 멀티스레드 알파 초고속 스캔 시작...")
+        now_str = now_kst.strftime("%Y-%m-%d %H:%M:%S KST")
         
-        if not ignore_regime:
-            is_bull_market = self.check_kospi_regime()
-            if not is_bull_market:
-                print("⚠️ 코스피 하락장 스위치 발동 - 진입 동결 (정상 동작)")
-                return
-        else:
-            print("🔓 [테스트 모드] 코스피 하락장 필터 우회하여 강제 스캔을 진행합니다.")
+        print(f"🔎 [{now_str}] 멀티스레드 알파 초고속 스캔 시작...")
+
+        if not self.ignore_regime and not self.check_kospi_regime():
+            print("⚠️ 코스피 하락장 스위치 발동 - 진입 동결 (정상 동작)")
+            return
 
         start_time = time.time()
         items = list(self.universe.items())
-
         with ThreadPoolExecutor(max_workers=15) as executor:
-            futures = [executor.submit(self.scan_stock_alpha, name, ticker) for name, ticker in items]
+            futures = [executor.submit(self.scan_stock, name, ticker) for name, ticker in items]
             for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception:
-                    pass
+                pass
 
         elapsed = time.time() - start_time
         print(f"✨ 멀티스레드 알파 스캔 완료! (소요시간: {elapsed:.2f}초)")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="1회 스캔 후 종료")
-    parser.add_argument("--ignore-regime", action="store_true", help="하락장 스위치 우회 강제 스캔")
+    parser.add_argument("--once", action="store_true", help="Run scan once and exit")
+    parser.add_argument("--ignore-regime", action="store_true", help="Bypass Kospi market regime filter")
     args = parser.parse_args()
 
-    bot = StockAlphaBot(top_n=200)
-    bot.run_single_scan(ignore_regime=args.ignore_regime)
+    bot = StockAlphaBot(top_n=200, ignore_regime=args.ignore_regime)
+    bot.run_scan()
