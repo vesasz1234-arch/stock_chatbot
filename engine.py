@@ -51,8 +51,6 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY")
-KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN")
 
 DISCORD_WEBHOOK_URL = (
     os.environ.get("DISCORD_WEBHOOK_URL")
@@ -61,7 +59,6 @@ DISCORD_WEBHOOK_URL = (
 
 
 def sanitize_market_text(text):
-    """네이버 크롤링 수치 오류 정제 (-0.60%상승 -> -0.60%)"""
     if not text:
         return ""
     text = re.sub(r'(-\d+\.?\d*%)\s*상승', r'\1', text)
@@ -70,7 +67,6 @@ def sanitize_market_text(text):
 
 
 def clean_cjk_junk(text):
-    """중국어/일본어 한자 및 가타카나 강제 삭제 필터"""
     if not text:
         return ""
     cleaned = re.sub(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]', '', text)
@@ -78,7 +74,6 @@ def clean_cjk_junk(text):
 
 
 def fetch_krx_market_summary():
-    """국내 증시 핵심 지수(KOSPI, KOSDAQ) 및 실시간 외인/기관 수급 정밀 수집"""
     krx_data = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
@@ -124,7 +119,6 @@ def fetch_krx_market_summary():
 
 
 def fetch_global_yahoo_data():
-    """월가 헤지펀드 핵심 매크로 지표 정밀 수집 (VIX, DXY, 야간선물 포함)"""
     tickers = {
         "S&P 500": "^GSPC",
         "NASDAQ": "^IXIC",
@@ -156,11 +150,7 @@ def fetch_global_yahoo_data():
     return data
 
 
-# =========================================================
-# ⛏️ Yahoo Finance & 네이버증권 대량 데이터 마이닝 파이프라인
-# =========================================================
 def mine_yahoo_finance_rss():
-    """야후 파이낸스 글로벌 핵심 마켓 뉴스 데이터 마이닝"""
     raw_news = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     rss_urls = [
@@ -189,7 +179,6 @@ def mine_yahoo_finance_rss():
 
 
 def mine_naver_finance_news():
-    """네이버 증시 속보/주요뉴스 데이터 마이닝"""
     raw_news = []
     headers = {"User-Agent": "Mozilla/5.0"}
     urls = [
@@ -217,20 +206,11 @@ def mine_naver_finance_news():
 
 
 def rank_and_filter_3star_news(all_news):
-    """
-    [월가 영향력 임팩트 스코어링 알고리즘]
-    뉴스 기사들을 분석하여 증시 영향력이 가장 높은 '별 3개(★★★)' 핵심 뉴스 Top 4선별
-    """
     high_impact_keywords = {
-        # 1. Macro / Fed / Monetary Policy (가중치 10점)
         "fomc": 10, "fed": 10, "rate": 9, "cpi": 10, "inflation": 9, "yield": 8,
         "금리": 10, "연준": 10, "물가": 9, "인플레이션": 9, "환율": 9, "달러": 8,
-
-        # 2. Tech / AI / Earnings Catalysts (가중치 10점)
         "nvidia": 10, "semiconductor": 9, "ai": 9, "earnings": 10, "guidance": 10,
         "엔비디아": 10, "반도체": 9, "hbm": 10, "실적": 10, "가이던스": 10, "삼성전자": 9, "sk하이닉스": 10,
-
-        # 3. Geopolitics / Commodity Shocks (가중치 8점)
         "opec": 8, "oil": 8, "war": 8, "tariff": 9, "crude": 8,
         "유가": 8, "중동": 8, "관세": 9, "지정학": 8, "안전자산": 8
     }
@@ -256,24 +236,16 @@ def rank_and_filter_3star_news(all_news):
             "score": score
         })
 
-    # 점수 기준 내림차순 정렬
     scored_news.sort(key=lambda x: x["score"], reverse=True)
-    top_3star_news = scored_news[:4]  # 상위 4개 추출
-
-    return top_3star_news
+    return scored_news[:4]
 
 
 def fetch_market_intelligence():
-    """뉴스 데이터 마이닝 및 특징주, 주도 섹터 수집"""
-    # 1. 데이터 마이닝 수행
     yahoo_news = mine_yahoo_finance_rss()
     naver_news = mine_naver_finance_news()
     all_mined_news = yahoo_news + naver_news
 
-    # 2. 알고리즘 스코어링을 통한 별3개(★★★) 뉴스 추출
     top_3star_news = rank_and_filter_3star_news(all_mined_news)
-
-    # 3. 거래대금 상위 종목 및 주도 업종 수집
     top_stocks, top_sectors = [], []
     headers = {"User-Agent": "Mozilla/5.0"}
 
@@ -313,9 +285,6 @@ def fetch_market_intelligence():
     return top_3star_news, top_stocks, top_sectors
 
 
-# =========================================================
-# 🤖 OpenRouter API (라이브 서버 동적 무료 모델 수집)
-# =========================================================
 def get_openrouter_models_live():
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -334,26 +303,20 @@ def get_openrouter_models_live():
                 if is_free:
                     live_free.append(m_id)
             if live_free:
-                print(f"🔍 [OpenRouter] 라이브 서버 무료 모델 {len(live_free)}개 검색 성공")
                 return live_free
-    except Exception as e:
-        print(f"⚠️ OpenRouter 라이브 모델 탐색 예외: {e}")
+    except Exception:
+        pass
 
     return [
         "meta-llama/llama-3.3-70b-instruct",
         "deepseek/deepseek-chat",
-        "qwen/qwen-2.5-72b-instruct",
-        "google/gemini-2.0-flash-lite-001"
+        "qwen/qwen-2.5-72b-instruct"
     ]
 
 
 def call_openrouter_ai(prompt, system_instruction):
     if not OPENROUTER_API_KEY:
-        print("⚠️ OPENROUTER_API_KEY 없음 - OpenRouter 스킵")
         return None
-
-    key_preview = f"{OPENROUTER_API_KEY[:8]}...{OPENROUTER_API_KEY[-4:]}" if len(OPENROUTER_API_KEY) > 12 else "INVALID_KEY"
-    print(f"🚀 [OpenRouter AI Engine] 라이브 모델 쿼리 가동 중... (Key: {key_preview})")
 
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
@@ -383,21 +346,17 @@ def call_openrouter_ai(prompt, system_instruction):
                 cleaned = sanitize_report_text(text)
                 cleaned = clean_cjk_junk(cleaned)
                 if len(cleaned) > 500:
-                    print(f"✅ [SUCCESS] OpenRouter ({model_name}) 월가 리포트 생성 완료!")
+                    print(f"✅ [SUCCESS] OpenRouter ({model_name}) 리포트 생성 완료!")
                     return cleaned
-            else:
-                print(f"⚠️ OpenRouter {model_name} 실패 ({res.status_code}): {res.text[:100]}")
-        except Exception as e:
-            print(f"⚠️ OpenRouter {model_name} 예외: {e}")
+        except Exception:
+            pass
     return None
 
 
 def call_groq_ai(prompt, system_instruction):
     if not GROQ_API_KEY:
-        print("⚠️ GROQ_API_KEY 없음 - Groq 스킵")
         return None
 
-    print("🚀 [Groq AI Engine] Llama-3.3-70B 월가 가드레일 가동 중...")
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -421,65 +380,61 @@ def call_groq_ai(prompt, system_instruction):
             cleaned = sanitize_report_text(text)
             cleaned = clean_cjk_junk(cleaned)
             if len(cleaned) > 500:
-                print("✅ [SUCCESS] Groq Llama-3.3-70B 월가 리포트 생성 완료!")
+                print("✅ [SUCCESS] Groq Llama-3.3-70B 리포트 생성 완료!")
                 return cleaned
-        else:
-            print(f"⚠️ Groq API 오류 ({res.status_code}): {res.text[:120]}")
-    except Exception as e:
-        print(f"⚠️ Groq AI 예외: {e}")
+    except Exception:
+        pass
     return None
 
 
 def call_gemini_clean(prompt, krx_data, global_data, top_3star_news, top_stocks, top_sectors):
+    time_context_instruction = (
+        "너는 장전 개장 전에 뉴욕증시 마감과 글로벌 매크로를 분석하여 오늘 한국증시 개장 전 관전포인트 및 투자전략을 제시하는 최고투자책임자(CIO)이다."
+        if is_morning
+        else "너는 장 마감 후 오늘 한국증시 마감 결과와 수급을 종합 분석하여 내일 투자전략을 제시하는 최고투자책임자(CIO)이다."
+    )
+
     system_instruction = (
-        "너는 골드만삭스/블룸버그 수석 마켓 전략가이자 최고투자책임자(CIO)인 [STOCK BOT]이다.\n"
-        "제공된 마이닝 데이터 중 [알고리즘 추출 별3개(★★★) 핵심 뉴스]를 정밀 정제하여, 개별 촉매 사건이 증시 및 개별 주요 종목(NVDA, SK하이닉스, 삼성전자 등)에 미치는 영향을 월가 기관급 인과관계로 정밀하게 분석하라.\n\n"
+        f"너는 골드만삭스/블룸버그 수석 마켓 전략가인 [STOCK BOT]이다.\n{time_context_instruction}\n"
+        "제공된 마이닝 데이터 중 [알고리즘 추출 별3개(★★★) 핵심 뉴스]를 정밀 정제하여 개별 촉매 사건이 증시 및 개별 주요 종목(NVDA, SK하이닉스, 삼성전자 등)에 미치는 영향을 월가 기관급 인과관계로 정밀 분석하라.\n\n"
         "[절대 금지 문구 및 어조 - 위반 시 무효]\n"
         "1. 절대 금지 단어: '~를 의미한다', '~관련이 있습니다', '~영향을 미칠 수 있습니다', '~시사합니다', '~고려합니다', '~생각됩니다'.\n"
         "2. 문장 끝 어조 강제: 오직 단정적/명령적 어조('~로 판단됨', '~를 기록', '~가 가시화됨', '~를 강제함')만 사용할 것.\n"
-        "3. 절대 금지 문자: 중국어/일본어 한자(漢字, 예: 影响, 需求, 圧力), 가타카나, 베트남어.\n"
+        "3. 절대 금지 문자: 중국어/일본어 한자, 가타카나.\n"
         "4. 수치 부호 절대 준수: 마이너스 비율(-0.60%)에 '상승' 표기 절대 금지.\n\n"
-        "[월가 정밀 분석 가드레일]\n"
-        "1. [2. 별3개 핵심 이슈 분석] 섹션에서는 제공된 [알고리즘 추출 별3개 핵심 뉴스]의 기사 제목과 내용을 직접 인용하고, 이에 직접 연결되는 영향 종목(예: NVIDIA, SK하이닉스, 삼성전자 등)과 파생 수급 인과관계를 매핑하라.\n"
-        "2. 원/달러 환율 하락(원화 강세) = '수출 대형주 환차손 부담 가중 및 영업이익률 상방 제약, 원자재 수입 기업 원가 절감 수혜'.\n"
-        "3. 미 10년물 국채금리 하락 = '할인율(Multiple) 상방 압력 완화에 따른 빅테크 Multiple Expansion 개시'.\n"
-        "4. 전술적 자산 배분 = '현금 비중 35% 엄수, HBM/AI 반도체 벨류체인 눌림목 분할 매수, 선물 인버스 델타 헤징 30% 즉시 가동'. 단호한 명령조로 작성하라.\n\n"
-        "[출력 규격 양식]\n"
-        "📈 **[STOCK BOT] 블룸버그 프리미엄 마감 시황 브리핑**\n\n"
+        "[출력 규격 양식 - 첫 줄 제목을 반드시 아래와 완전히 동일하게 출력할 것]\n"
+        f"📈 **[STOCK BOT] {mode_title}**\n\n"
         "---\n\n"
         "### 1. 🌐 글로벌 매크로 & 국내 증시 스코어카드 (Macro Dashboard)\n"
         "• **국내 증시 현황**: KOSPI **[치]** | KOSDAQ **[치]**\n"
-        "• **시장 수급 메커니즘**: [외인/기관 순매수 수치 기반 세력의 포지셔닝 단정 분석]\n"
+        "• **시장 수급 메커니즘**: [외인/기관 포지셔닝 분석]\n"
         "• **글로벌 벤치마크 지표**: S&P 500 **[치]**, NASDAQ **[치]**, 야간선물(S&P500 **[치]** / NQ **[치]**), VIX **[치]**, DXY **[치]**, 미 10년물 금리 **[치]**, 원/달러 환율 **[치]**, WTI 유가 **[치]**, 금 선물 **[치]**, 비트코인 **[치]**\n\n"
         "---\n\n"
         "### 2. 📰 [3성급★★★] 마이닝 기반 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)\n"
-        "• **이슈 1: [실시간 수집 별3개 기사 1 제목 및 분석]**\n"
-        "  - **메커니즘 분석**: [이슈가 글로벌 증시 및 관련 핵심 종목에 미치는 직접 파급 경로]\n"
-        "• **이슈 2: [실시간 수집 별3개 기사 2 제목 및 분석]**\n"
-        "  - **월가 시각**: [금리/환율/파생 수급 및 기관 포지셔닝 영향 정밀 진단]\n\n"
+        "• **이슈 1: [별3개 기사 1 제목 및 분석]**\n"
+        "  - **메커니즘 분석**: [파급 경로 분석]\n"
+        "• **이슈 2: [별3개 기사 2 제목 및 분석]**\n"
+        "  - **월가 시각**: [기관 포지셔닝 영향 진단]\n\n"
         "---\n\n"
         "### 3. 🏢 [3성급★★★] 핵심 기업 실적 & 주도 섹터 (Capital Flow Analysis)\n"
-        "• **주도 강세 섹터**: [스마트머니 집결 섹터 및 촉매 정밀 분석]\n"
-        "• **거래대금 집중 종목 및 수급 특징**: [상위 종목 매수 세력의 의도 및 인버스/레버리지 메커니즘 추론]\n\n"
+        "• **주도 강세 섹터**: [스마트머니 집결 섹터 분석]\n"
+        "• **거래대금 집중 종목 및 수급 특징**: [상위 종목 매수 세력 의도 분석]\n\n"
         "---\n\n"
         "### 4. 🎯 [3성급★★★] 원자재, 환율 & 자산시장 시사점 (Alternative Risk)\n"
-        "• **금/유가 시사점**: [인플레이션 리프라이싱 및 실물 안전자산 쏠림 분석]\n\n"
+        "• **금/유가 시사점**: [실물 안전자산 쏠림 분석]\n\n"
         "---\n\n"
-        "### 5. 🚀 [Goldman Sachs Strategist] 내일의 전술적 자산 배분 대응 전략\n"
-        "• **포트폴리오 리스크 관리**: [구체적인 현금 비중(%) 및 액션 플랜 명령조 제시]"
+        f"### 5. 🚀 [Goldman Sachs Strategist] {'오늘' if is_morning else '내일'}의 전술적 자산 배분 대응 전략\n"
+        "• **포트폴리오 리스크 관리**: [현금 비중(%) 및 단호한 액션 플랜 제시]"
     )
 
-    # 1. OpenRouter 1순위 가동
     openrouter_res = call_openrouter_ai(prompt, system_instruction)
     if openrouter_res:
         return openrouter_res
 
-    # 2. Groq 2순위 가동
     groq_res = call_groq_ai(prompt, system_instruction)
     if groq_res:
         return groq_res
 
-    # 3. Gemini 3순위 가동
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
@@ -499,45 +454,44 @@ def call_gemini_clean(prompt, krx_data, global_data, top_3star_news, top_stocks,
                         if len(cleaned) > 500 and ("📈" in cleaned or "[STOCK BOT]" in cleaned):
                             print(f"✅ [SUCCESS] 구글 Gemini AI ({m_name}) 리포트 생성 완료!")
                             return cleaned
-                except Exception as e:
-                    print(f"⚠️ Gemini {m_name} 오류: {str(e)[:100]}")
-        except Exception as e:
-            print(f"⚠️ Gemini Client 실패: {e}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
-    # 4. 백업 템플릿
-    print("🚨 모든 AI 모델 호출 불가 - 비상 템플릿 가동")
     return build_dynamic_rich_fallback(krx_data, global_data, top_3star_news, top_stocks, top_sectors)
 
 
 def build_dynamic_rich_fallback(krx_data, global_data, top_3star_news, top_stocks, top_sectors):
-    """최후의 백업 분석 엔진"""
-    kospi_info = krx_data.get("KOSPI", "6,258.77 (-0.60%)")
-    kosdaq_info = krx_data.get("KOSDAQ", "798.81 (-0.36%)")
-    supply_info = krx_data.get("KOSPI_수급", "외인 순매도 전환, 기관 파생 헤지물량 출하")
+    kospi_info = krx_data.get("KOSPI", "정보 수집 중")
+    kosdaq_info = krx_data.get("KOSDAQ", "정보 수집 중")
+    supply_info = krx_data.get("KOSPI_수급", "외인/기관 동향 스캔 중")
 
-    sp500 = global_data.get("S&P 500", "4,757.64 (+0.62%)")
-    nasdaq = global_data.get("NASDAQ", "26,690.62 (+1.30%)")
-    es = global_data.get("S&P500 선물", "4,765.25 (+0.15%)")
-    nq = global_data.get("나스닥100 선물", "26,720.50 (+0.22%)")
-    vix = global_data.get("VIX 변동성지수", "15.42 (-1.20%)")
-    dxy = global_data.get("달러 인덱스", "104.12 (+0.08%)")
-    us10y = global_data.get("미 10년물 국채금리", "4.66% (-0.21%)")
-    usdkrw = global_data.get("원/달러 환율", "1,407.45원 (-0.96%)")
-    wti = global_data.get("WTI 유가", "78.18달러 (+1.15%)")
-    gold = global_data.get("금 선물", "4,340.7달러 (+2.33%)")
-    btc = global_data.get("비트코인", "64,956.3달러 (+0.12%)")
+    sp500 = global_data.get("S&P 500", "-")
+    nasdaq = global_data.get("NASDAQ", "-")
+    es = global_data.get("S&P500 선물", "-")
+    nq = global_data.get("나스닥100 선물", "-")
+    vix = global_data.get("VIX 변동성지수", "-")
+    dxy = global_data.get("달러 인덱스", "-")
+    us10y = global_data.get("미 10년물 국채금리", "-")
+    usdkrw = global_data.get("원/달러 환율", "-")
+    wti = global_data.get("WTI 유가", "-")
+    gold = global_data.get("금 선물", "-")
+    btc = global_data.get("비트코인", "-")
 
-    n1 = top_3star_news[0]["title"] if len(top_3star_news) > 0 else "미 연준 긴축 기조 장기화 우려 및 국채 금리 할인율 상방 압력"
-    n2 = top_3star_news[1]["title"] if len(top_3star_news) > 1 else "실적 가시성 보유 우량주 중심의 세력 차별화 수급 집결"
+    n1 = top_3star_news[0]["title"] if len(top_3star_news) > 0 else "미 연준 긴축 기조 및 매크로 변동성 주시"
+    n2 = top_3star_news[1]["title"] if len(top_3star_news) > 1 else "실적 가시성 보유 우량주 중심 차별화 수급"
 
     stocks_formatted = (
         "\n".join([f" • **{s.split('(')[0].strip()}**: {s.split('(')[1].replace(')', '') if '(' in s else s}" for s in top_stocks[:5]])
         if top_stocks
-        else " • **KODEX 200선물인버스2X**: 지수 하방 헤지 수요 폭주\n • **KODEX 2차전지산업레버리지**: 낙폭 과대 기술적 반등 유입"
+        else " • **주요 주도주**: 실시간 거래대금 수급 추적 중"
     )
-    sectors_formatted = ", ".join(top_sectors[:4]) if top_sectors else "전자제품, 전기제품, 석유와가스, 화학"
+    sectors_formatted = ", ".join(top_sectors[:4]) if top_sectors else "반도체, 2차전지, 바이오, 방산"
 
-    return f"""📈 **[STOCK BOT] 블룸버그 프리미엄 마감 시황 브리핑 ({mode_title})**
+    target_day = "오늘" if is_morning else "내일"
+
+    return f"""📈 **[STOCK BOT] {mode_title}**
 
 ---
 
@@ -555,35 +509,30 @@ def build_dynamic_rich_fallback(krx_data, global_data, top_3star_news, top_stock
 ### 2. 📰 [3성급★★★] 마이닝 기반 글로벌 & 국내 핵심 이슈 분석 (Macro Impact Chain)
 
 - **이슈 1 [3성급★★★]: {n1}** ⚠️
-  • **블룸버그 특파원 시각**: 미 국채금리가 {us10y} 선에서 횡보함에 따라 할인율 상승에 취약한 고평가 기술주 전반의 Multiple 조정이 진행 중입니다.
+  • **월가 분석 시각**: 미 금리 및 환율 변동성에 따라 고평가 기술주 전반의 Multiple 차별화 장세 진행 중.
 
 - **이슈 2 [3성급★★★]: {n2}** 📊
-  • **골드만삭스 전략가 시각**: 원/달러 환율이 {usdkrw} 수준으로 원화 강세가 진행됨에 따라 수출 기업의 환차손 부담이 가중되는 반면, 원자재 수입 기업의 원가 부담은 개선되는 차별화 장세가 연출되고 있습니다.
+  • **기관 전략가 시각**: 원/달러 환율 변동에 따라 수출주 및 원자재 수입주의 세부 수급 이탈입 연출.
 
 ---
 
 ### 3. 🏢 [3성급★★★] 핵심 기업 실적 & 시장 주도 섹터 (Capital Flow Analysis)
 
-- **이슈 3 [3성급★★★]: 실적 모멘텀 및 원자재 수혜주 중심의 차별화 쏠림** 💰
-  • **주도 강세 섹터**: {sectors_formatted}
-  • **수급 모멘텀**: 지수의 추가 하락 압력 속에서도 원가 전가력이 확보된 화학/원자재 섹터로 스마트머니의 집중 매수세가 포착되었습니다.
-
+- **주도 강세 섹터**: {sectors_formatted}
 - **거래대금 집중 핵심 종목 및 수급 특징**: 🧨
 {stocks_formatted}
-  • **세력 매매 의도 분석**: 'KODEX 200선물인버스2X' 등 지수 하방 상품으로의 거래대금 쏠림은 기관 및 세력들이 추가 변동성에 대비해 강력한 **하방 리스크 차단막(Risk Buffer)**을 구축하고 있음을 증명합니다.
 
 ---
 
 ### 4. 🎯 [3성급★★★] 원자재, 환율 & 자산시장 시사점 (Alternative Risk)
-- **금 선물 ({gold}) 폭등**: 지정학적 불안과 통화 가치 하락에 대비한 실물 안전자산으로의 자금 대피 심리가 정점에 달했습니다.
-- **WTI 유가 ({wti}) 추이**: 인플레이션 재점화 가능성을 지속 자극하며 중앙은행의 긴축 기조 완화 걸림돌로 작용 중입니다.
+- **금 선물 ({gold}) / WTI 유가 ({wti})**: 지정학적 리스크 및 인플레이션 기대감 재점화 여부 실시간 추적 중.
 
 ---
 
-### 5. 🚀 [Goldman Sachs Strategist] 내일의 전술적 자산 배분 대응 전략
-- **방어적 포트폴리오 재편 (Portfolio Risk Management)**:
-  1. **현금 비중 35% 엄수**: 파생 인버스 쏠림이 완화되기 전까지 무리한 추격 매수를 금지하고 현금 비중 35% 이상을 엄격히 유지하십시오.
-  2. **실적 퀄리티주 분할 접근**: 유가/원자재 상승 수혜 섹터 및 펀더멘털이 확실한 반도체/AI 벨류체인 위주의 분할 매수 전략을 즉시 가동하십시오."""
+### 5. 🚀 [Goldman Sachs Strategist] {target_day}의 전술적 자산 배분 대응 전략
+- **포트폴리오 리스크 관리**:
+  1. **현금 비중 35% 엄수**: 하방 변동성 완화 시까지 추격 매수 금지 및 현금 비중 유지.
+  2. **실적 퀄리티주 분할 접근**: AI 반도체 벨류체인 및 실적 확실성 보유 종목 중심의 분할 매수 전략 가동."""
 
 
 def generate_unified_report(krx_data, global_data, top_3star_news, top_stocks, top_sectors):
@@ -651,7 +600,7 @@ def sanitize_report_text(text):
 
 def send_discord_message(text_content):
     if not DISCORD_WEBHOOK_URL:
-        print("⚠️ DISCORD_WEBHOOK_URL 미설정으로 스킵합니다.")
+        print("⚠️ DISCORD_WEBHOOK_URL 미설정 스킵")
         return
     cleaned_content = sanitize_report_text(text_content)
     cleaned_content = clean_cjk_junk(cleaned_content)
@@ -668,8 +617,6 @@ def send_discord_message(text_content):
             res = requests.post(DISCORD_WEBHOOK_URL, data=json.dumps(payload), headers=headers, timeout=10)
             if res.status_code in [200, 204]:
                 print(f"✅ [디스코드] 파트 {idx+1} 전송 완료!")
-            else:
-                print(f"⚠️ 디스코드 전송 실패 (상태 코드: {res.status_code}): {res.text}")
         except Exception as e:
             print(f"⚠️ 디스코드 전송 에러: {e}")
         time.sleep(1)
