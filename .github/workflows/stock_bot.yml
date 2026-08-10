@@ -1,46 +1,67 @@
-name: Stock Bot Automation Pipeline
+name: Stock Bot Automation
 
 on:
   schedule:
-    # 1. 장전 리포트: 한국시간 오전 8:00 (UTC 전날 23:00)
-    - cron: '0 23 * * 0-4'
-    # 2. 장후 리포트: 한국시간 오후 6:00 (UTC 당일 09:00)
-    - cron: '0 9 * * 1-5'
-  workflow_dispatch: # 수동 실행 허용
+    # 장전 모닝 브리핑: KST 평일 07:50 (UTC 일~목 22:50)
+    - cron: '50 22 * * 0-4'
+    # 장후 마감 브리핑: KST 평일 15:30 (UTC 월~금 06:30)
+    - cron: '30 6 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '실행 모드 선택 (morning: 장전, evening: 장후)'
+        required: true
+        default: 'morning'
+        type: choice
+        options:
+          - morning
+          - evening
 
 jobs:
   run-stock-bot:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
+      - name: 저장소 코드 체크아웃
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: 파이썬 환경 설정
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
-      - name: Install dependencies
+      - name: 필수 라이브러리 설치
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install pandas numpy requests beautifulsoup4 yfinance google-genai
 
-      - name: Run Stock Bot Engine
+      - name: 실행 모드 판별 및 엔진 구동
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
-          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          KST_HOUR=$(TZ=Asia/Seoul date +%H)
-          if [ $KST_HOUR -lt 12 ]; then
-            echo "🌅 장전 모드로 실행합니다."
+          # 1. 수동 실행(workflow_dispatch) 시 입력받은 모드 적용
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MODE="${{ github.event.inputs.mode }}"
+          else
+            # 2. 스케줄러 자동 실행 시 UTC 시각 기준으로 장전/장후 자동 판별
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" -ge 18 ] || [ "$HOUR" -lt 3 ]; then
+              MODE="morning"
+            else
+              MODE="evening"
+            fi
+          fi
+
+          # 3. 판별된 모드로 engine.py 실행
+          if [ "$MODE" = "morning" ]; then
+            echo "🌅 [장전 모드] 브리핑 파이프라인을 가동합니다."
             python engine.py --mode morning
           else
-            echo "🌆 장후 모드로 실행합니다."
+            echo "🌆 [장후 모드] 브리핑 파이프라인을 가동합니다."
             python engine.py --mode evening
           fi
