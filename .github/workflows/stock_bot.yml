@@ -2,10 +2,10 @@ name: Stock Bot Automation
 
 on:
   schedule:
-    # 장전 모닝 브리핑: KST 평일 07:50 (UTC 일~목 22:50)
-    - cron: '50 22 * * 0-4'
-    # 장후 마감 브리핑: KST 평일 15:30 (UTC 월~금 06:30)
-    - cron: '30 6 * * 1-5'
+    # 장전 모닝 브리핑: KST 평일 08:10 (UTC 일~목 23:10)
+    - cron: '10 23 * * 0-4'
+    # 장후 마감 브리핑: KST 평일 18:10 (UTC 월~금 09:10)
+    - cron: '10 9 * * 1-5'
   workflow_dispatch:
     inputs:
       mode:
@@ -44,24 +44,22 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          # 1. 수동 실행(workflow_dispatch) 시 입력받은 모드 적용
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             MODE="${{ github.event.inputs.mode }}"
           else
-            # 2. 스케줄러 자동 실행 시 UTC 시각 기준으로 장전/장후 자동 판별
+            # UTC 시간 기준 판별 (KST 08:10 = UTC 23:10, KST 18:10 = UTC 09:10)
             HOUR=$(date -u +%H)
-            if [ "$HOUR" -ge 18 ] || [ "$HOUR" -lt 3 ]; then
+            if [ "$HOUR" -ge 18 ] || [ "$HOUR" -lt 4 ]; then
               MODE="morning"
             else
               MODE="evening"
             fi
           fi
 
-          # 3. 판별된 모드로 engine.py 실행
           if [ "$MODE" = "morning" ]; then
-            echo "🌅 [장전 모드] 브리핑 파이프라인을 가동합니다."
+            echo "🌅 [장전 모드] 월가 기관급 브리핑 파이프라인을 가동합니다."
             python engine.py --mode morning
           else
-            echo "🌆 [장후 모드] 브리핑 파이프라인을 가동합니다."
+            echo "🌆 [장후 모드] 월가 기관급 브리핑 파이프라인을 가동합니다."
             python engine.py --mode evening
           fi

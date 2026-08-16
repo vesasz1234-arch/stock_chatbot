@@ -6,6 +6,7 @@ import time
 import datetime
 import threading
 from datetime import timezone, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import numpy as np
 import FinanceDataReader as fdr
@@ -33,13 +34,16 @@ DISCORD_WEBHOOK_URL = (
 )
 
 class RealTradeAlphaBot:
-    def __init__(self, top_n=200, ignore_regime=False):
+    def __init__(self, top_n=200, ignore_regime=False, max_positions=5, allocation_ratio=0.20):
         self.top_n = top_n
         self.ignore_regime = ignore_regime
+        self.max_positions = max_positions          # 최대 동시 보유 종목 수 (5개)
+        self.allocation_ratio = allocation_ratio    # 종목당 진입 비중 (계좌의 20%)
         self.access_token = None
         self.scanned_signals = set()
         self.active_positions = {}
         self.universe = {}
+        self.buy_lock = threading.Lock()
         self.init_kis_token()
         self.sync_holdings_from_balance()
         self.start_dedicated_monitor_thread()
@@ -221,39 +225,47 @@ class RealTradeAlphaBot:
         return 0
 
     def send_real_buy_order(self, name, ticker, curr_price):
-        """예수금 99% 비중으로 시장가 즉시 매수 주문"""
-        cash = self.get_available_cash()
-        if cash < 10000:
-            print(f"[WARN] Insufficient Cash: {cash:,} KRW. Order Skipped.")
-            return False, 0
+        """현재가 기준 20% 비중 분할 시장가 매수 주문"""
+        with self.buy_lock:
+            if len(self.active_positions) >= self.max_positions:
+                print(f"⚠️ [매수 스킵] 최대 포지션 개수 달성 ({len(self.active_positions)}/{self.max_positions})")
+                return False, 0
 
-        qty = int((cash * 0.99) // curr_price)
-        if qty <= 0:
-            print(f"[WARN] Order Qty is 0 (Cash: {cash:,} KRW, Stock Price: {curr_price:,} KRW)")
-            return False, 0
+            cash = self.get_available_cash()
+            if cash < 10000:
+                print(f"⚠️ [매수 스킵] 예수금 부족 (주문가능금액: {cash:,}원)")
+                return False, 0
 
-        url = f"{URL_BASE}/uapi/domestic-stock/v1/trading/order-cash"
-        headers = {
-            "content-type": "application/json",
-            "authorization": f"Bearer {self.access_token}",
-            "appkey": APP_KEY,
-            "appsecret": APP_SECRET,
-            "tr_id": "TTTC0802U"
-        }
-        body = {
-            "CANO": CANO, "ACNT_PRDT_CD": ACNT_PRDT_CD,
-            "PDNO": ticker, "ORD_DVSN": "01", "ORD_QTY": str(qty), "ORD_UNPR": "0"
-        }
-        try:
-            res = requests.post(url, headers=headers, data=json.dumps(body), timeout=5)
-            if res.status_code == 200 and res.json().get("rt_cd") == "0":
-                print(f"🔥 [REAL BUY EXECUTED] {name}({ticker}) {qty} shares @ {curr_price:,} KRW")
-                return True, qty
-            else:
-                print(f"[BUY ORDER REJECTED] {res.text}")
-        except Exception as e:
-            print(f"[BUY EXCEPTION] {e}")
-        return False, 0
+            # 예수금의 20% 금액을 현재가로 나누어 정확한 주수 산출
+            target_cash = cash * self.allocation_ratio
+            qty = int(target_cash // curr_price)
+
+            if qty <= 0:
+                print(f"⚠️ [매수 스킵] 수량 부족 (배정금액: {int(target_cash):,}원 / 현재가: {curr_price:,}원)")
+                return False, 0
+
+            url = f"{URL_BASE}/uapi/domestic-stock/v1/trading/order-cash"
+            headers = {
+                "content-type": "application/json",
+                "authorization": f"Bearer {self.access_token}",
+                "appkey": APP_KEY,
+                "appsecret": APP_SECRET,
+                "tr_id": "TTTC0802U"
+            }
+            body = {
+                "CANO": CANO, "ACNT_PRDT_CD": ACNT_PRDT_CD,
+                "PDNO": ticker, "ORD_DVSN": "01", "ORD_QTY": str(qty), "ORD_UNPR": "0"
+            }
+            try:
+                res = requests.post(url, headers=headers, data=json.dumps(body), timeout=5)
+                if res.status_code == 200 and res.json().get("rt_cd") == "0":
+                    print(f"🔥 [실전 20% 분할 매수 체결 성공] {name}({ticker}) {qty:,}주 @ {curr_price:,}원 (투자금액: {qty * curr_price:,}원)")
+                    return True, qty
+                else:
+                    print(f"[BUY ORDER REJECTED] {res.text}")
+            except Exception as e:
+                print(f"[BUY EXCEPTION] {e}")
+            return False, 0
 
     def send_real_sell_order(self, name, ticker, qty, reason):
         """시장가 전량 매도 주문"""
@@ -272,7 +284,7 @@ class RealTradeAlphaBot:
         try:
             res = requests.post(url, headers=headers, data=json.dumps(body), timeout=5)
             if res.status_code == 200 and res.json().get("rt_cd") == "0":
-                print(f"💰 [REAL SELL EXECUTED - {reason}] {name}({ticker}) {qty} shares")
+                print(f"💰 [실전 시장가 매도 체결 - {reason}] {name}({ticker}) {qty:,}주")
                 return True
             else:
                 print(f"[SELL ORDER REJECTED] {res.text}")
@@ -329,36 +341,68 @@ class RealTradeAlphaBot:
 
         print(f"✅ Loaded {len(self.universe)} stocks.\n")
 
-    def scan_and_trade_kis(self, name: str, ticker: str):
-        """한투 API 실시간 데이터 기반 종목 스캔 및 실전 매수"""
+    def calculate_time_weighted_rvol(self, df):
+        now_kst = datetime.datetime.now(KST)
+        market_start = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
+        elapsed_minutes = max((now_kst - market_start).total_seconds() / 60.0, 1.0) if now_kst >= market_start else 1.0
+        time_factor = min(elapsed_minutes / 390.0, 1.0)
+        vol_ma10 = df['Volume'].iloc[:-1].tail(10).mean() + 1e-9
+        return (df['Volume'].iloc[-1] / time_factor) / vol_ma10
+
+    def scan_stock_alpha(self, name: str, ticker: str):
+        """대표님의 알파 퀀트 수식 스캔 및 실전 자동 매수 집행 엔진"""
         try:
-            time.sleep(0.06)
-            real_data = self.get_kis_realtime_stock_info(ticker)
-            if not real_data:
+            now_kst = datetime.datetime.now(KST)
+            start_dt = (now_kst - datetime.timedelta(days=90)).strftime("%Y-%m-%d")
+            df = fdr.DataReader(ticker, start_dt)
+            if df.empty or len(df) < 35:
                 return
 
-            curr_price = real_data["price"]
-            open_price = real_data["open"]
-            high_price = real_data["high"]
-            low_price = real_data["low"]
-            vol = real_data["volume"]
-            chg_rate = real_data["change_rate"]
+            df['MA5'] = df['Close'].rolling(5).mean()
+            df['MA20'] = df['Close'].rolling(20).mean()
+            df['RVOL'] = self.calculate_time_weighted_rvol(df)
 
-            cond_trend = (curr_price > open_price) and (chg_rate >= 1.5)
-            cond_volume = vol >= 50000
-            
-            total_range = max(high_price - low_price, 1)
-            upper_shadow_ratio = (high_price - max(open_price, curr_price)) / total_range
-            cond_shadow = upper_shadow_ratio <= 0.35
+            prev_close = df['Close'].shift(1)
+            tr = pd.concat([
+                df['High'] - df['Low'],
+                (df['High'] - prev_close).abs(),
+                (df['Low'] - prev_close).abs()
+            ], axis=1).max(axis=1)
+            df['ATR14'] = tr.rolling(14).mean()
+            df['ATR_MA20'] = df['ATR14'].rolling(20).mean()
 
-            if cond_trend and cond_volume and cond_shadow:
-                now_kst = datetime.datetime.now(KST)
-                today_str = now_kst.strftime("%Y-%m-%d")
+            atr_ma20_val = df['ATR_MA20'].iloc[-1] if not pd.isna(df['ATR_MA20'].iloc[-1]) else df['ATR14'].iloc[-1]
+            df['ATR_Ratio'] = float(df['ATR14'].iloc[-1] / (atr_ma20_val + 1e-9)) if atr_ma20_val > 0 else 1.0
+
+            std20 = df['Close'].rolling(20).std()
+            df['BB_Upper'] = df['MA20'] + (std20 * 2.0)
+            df['Gap_Up_Pct'] = (df['Open'] - prev_close) / (prev_close + 1e-9)
+            df['First_Breakout'] = df['Close'].shift(1) < df['BB_Upper'].shift(1)
+
+            total_range = df['High'] - df['Low'] + 1e-9
+            df['Upper_Shadow_Ratio'] = (df['High'] - np.maximum(df['Open'], df['Close'])) / total_range
+
+            today = df.iloc[-1]
+            today_str = now_kst.strftime("%Y-%m-%d")
+
+            cond_gap = today['Gap_Up_Pct'] <= 0.025
+            cond_first = today['First_Breakout'] == True
+            cond_shadow = today['Upper_Shadow_Ratio'] <= 0.30
+            cond_volume = today['RVOL'] >= 1.35
+            cond_trend = (today['Close'] > today['Open']) and (today['Close'] > today['MA5'])
+            cond_volatility = (today['Close'] >= today['BB_Upper']) or (today['ATR_Ratio'] >= 1.10)
+
+            if cond_gap and cond_first and cond_shadow and cond_volume and cond_trend and cond_volatility:
                 signal_key = f"{ticker}_{today_str}"
 
                 if signal_key not in self.scanned_signals and ticker not in self.active_positions:
                     self.scanned_signals.add(signal_key)
 
+                    real_info = self.get_kis_realtime_stock_info(ticker)
+                    curr_price = real_info["price"] if real_info else int(today['Close'])
+
+                    print(f"🎯 [알파 퀀트 포착 ➔ 20% 분할 매수 실행] {name} ({ticker}) - 현재가: {curr_price:,}원")
+                    
                     success, qty = self.send_real_buy_order(name, ticker, curr_price)
                     if success and qty > 0:
                         target_price = int(curr_price * 1.018)
@@ -370,11 +414,11 @@ class RealTradeAlphaBot:
                         }
 
                         msg = (
-                            f"🚨 **[REAL TRADE] 실전 계좌 매수 체결 완료 (KIS 실시간 스캔)**\n"
+                            f"🚨 **[REAL TRADE] 알파 퀀트 20% 비중 매수 완료**\n"
                             f"• 종목명: **{name}** (`{ticker}`)\n"
-                            f"• 체결가: {curr_price:,}원 ({qty:,}주)\n"
-                            f"• 🎯 익절가 (+1.8%): {target_price:,}원\n"
-                            f"• 🛑 손절가 (-0.8%): {stop_price:,}원"
+                            f"• 체결가: {curr_price:,}원 ({qty:,}주 | 약 {qty * curr_price:,}원)\n"
+                            f"• RVOL: {today['RVOL']:.2f}x | ATR 비중: {today['ATR_Ratio']:.2f}\n"
+                            f"• 🎯 익절가 (+1.8%): {target_price:,}원 | 🛑 손절가 (-0.8%): {stop_price:,}원"
                         )
                         self.send_discord_msg(msg)
         except Exception:
@@ -431,7 +475,7 @@ class RealTradeAlphaBot:
 
     def run_market_loop(self):
         self.update_universe()
-        print(f"🚀 [RealTradeAlphaBot] Engine Active (Account: {CANO}-01 | Ignore Regime: {self.ignore_regime})")
+        print(f"🚀 [RealTradeAlphaBot] Engine Active (Account: {CANO}-01 | Max Positions: {self.max_positions} | Ratio: {int(self.allocation_ratio*100)}% | Ignore Regime: {self.ignore_regime})")
 
         while True:
             now_kst = datetime.datetime.now(KST)
@@ -443,8 +487,15 @@ class RealTradeAlphaBot:
                     time.sleep(10)
                     continue
 
-                for name, ticker in self.universe.items():
-                    self.scan_and_trade_kis(name, ticker)
+                start_time = time.time()
+                items = list(self.universe.items())
+                with ThreadPoolExecutor(max_workers=15) as executor:
+                    futures = [executor.submit(self.scan_stock_alpha, name, ticker) for name, ticker in items]
+                    for future in as_completed(futures):
+                        pass
+
+                elapsed = time.time() - start_time
+                print(f"✨ [{now_kst.strftime('%H:%M:%S')}] 알파 스캔 완료! (소요시간: {elapsed:.2f}초)")
 
             else:
                 print(f"[{now_kst.strftime('%H:%M:%S')}] Market Closed. Sleeping...")
@@ -457,5 +508,5 @@ if __name__ == "__main__":
     parser.add_argument("--ignore-regime", action="store_true", help="Bypass Kospi market regime filter")
     args = parser.parse_args()
 
-    bot = RealTradeAlphaBot(top_n=200, ignore_regime=args.ignore_regime)
+    bot = RealTradeAlphaBot(top_n=200, ignore_regime=args.ignore_regime, max_positions=5, allocation_ratio=0.20)
     bot.run_market_loop()
