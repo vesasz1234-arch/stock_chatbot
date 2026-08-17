@@ -14,7 +14,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # =========================================================
-# CONFIGURATION
+# CONFIGURATION & HOLIDAY GUARD
 # =========================================================
 KST = timezone(timedelta(hours=9))
 
@@ -23,6 +23,36 @@ DISCORD_WEBHOOK_URL = (
     or os.environ.get("DISCORD_WEBHOOK_URL")
     or "https://discordapp.com/api/webhooks/1534112008767803433/B1S87u-nnaokeMR2lut-FAPv1PJAbeVuQunoWr-4AoZfrG4g70XwhuD8PATpApYgeFt1"
 )
+
+def is_krx_market_open():
+    """한국 거래소(KRX) 주말 및 공휴일/휴장일 판별 필터"""
+    now_kst = datetime.datetime.now(KST)
+    
+    # 1. 주말 체크 (토요일=5, 일요일=6)
+    if now_kst.weekday() >= 5:
+        return False, f"주말({now_kst.strftime('%A')})"
+    
+    # 2. KRX 공식 휴장일 및 공휴일 목록 (YYYY-MM-DD)
+    krx_holidays = {
+        "2026-01-01",  # 신정
+        "2026-02-16", "2026-02-17", "2026-02-18",  # 설날 연휴
+        "2026-03-01", "2026-03-02",  # 삼일절 및 대체공휴일
+        "2026-05-05",  # 어린이날
+        "2026-05-24",  # 석가탄신일
+        "2026-06-06",  # 현충일
+        "2026-08-15",  # 광복절
+        "2026-09-24", "2026-09-25", "2026-09-26",  # 추석 연휴
+        "2026-10-03",  # 개천절
+        "2026-10-09",  # 한글날
+        "2026-12-25",  # 성탄절
+        "2026-12-31"   # 연말 증시 휴장일
+    }
+    
+    today_str = now_kst.strftime("%Y-%m-%d")
+    if today_str in krx_holidays:
+        return False, f"공휴일/휴장일({today_str})"
+        
+    return True, "정상 개장일"
 
 class StockAlphaBot:
     def __init__(self, top_n=200, ignore_regime=False):
@@ -159,6 +189,12 @@ class StockAlphaBot:
             pass
 
     def run_scan(self):
+        # 🛑 장 휴장 여부 최종 가드 확인
+        is_open, reason = is_krx_market_open()
+        if not is_open:
+            print(f"🛑 [알파봇 스캔 중단] 오늘은 증시가 열리지 않습니다: {reason}")
+            return
+
         self.update_universe()
         now_kst = datetime.datetime.now(KST)
         now_str = now_kst.strftime("%Y-%m-%d %H:%M:%S KST")
